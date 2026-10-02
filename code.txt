@@ -1,0 +1,30 @@
+загрузка на гитхаб
+
+$content = [Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\Users\fores\OneDrive\Рабочий стол\mark\printer_site\uploads\filename.txt"))
+
+
+$headers = @{
+>> Authorization = "Bearer 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"
+>> Accept = "application/vnd.github+json"
+>> }
+
+$body = @{
+>> message = "filename.txt"
+>> content = $content
+>> } | ConvertTo-Json
+
+Invoke-RestMethod `
+>> -Uri "https://api.github.com/repos/gerasimovtrofim031-code/code/contents/filename.txt" `
+>> -Method Put `
+>> -Headers $headers `
+>> -Body $body `
+>> -ContentType "application/json"
+
+
+
+выгрузка с гитхаба
+
+cd "$HOME\Downloads"
+Invoke-WebRequest `
+>> -Uri "https://raw.githubusercontent.com/gerasimovtrofim031-code/code/main/game.txt" `
+>> -OutFile "game.txt"
