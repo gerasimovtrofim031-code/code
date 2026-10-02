@@ -1,0 +1,671 @@
+import java.io.*;
+import java.util.*;
+import java.util.function.Consumer;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+// ==========================================
+// 1. ИНТЕРФЕЙСЫ И АБСТРАКТНЫЕ КЛАССЫ
+// ==========================================
+
+interface Dispatchable {
+    void dispatch();
+    void recall();
+    boolean isInTransit();
+}
+
+abstract class Transport implements Dispatchable, Serializable {
+    private static final long serialVersionUID = 1L;
+
+    protected String id;
+    protected String model;
+    protected boolean status; // true - в пути, false - на базе
+    protected double batteryLevel; // 0.0 - 100.0
+
+    public Transport(String id, String model, boolean status, double batteryLevel) {
+        this.id = id;
+        this.model = model;
+        this.status = status;
+        this.batteryLevel = batteryLevel;
+    }
+
+    @Override
+    public void dispatch() {
+        this.status = true;
+    }
+
+    @Override
+    public void recall() {
+        this.status = false;
+    }
+
+    @Override
+    public boolean isInTransit() {
+        return this.status;
+    }
+
+    public abstract String getDetails();
+
+    public String getId() { return id; }
+    public void setId(String id) { this.id = id; }
+
+    public String getModel() { return model; }
+    public void setModel(String model) { this.model = model; }
+
+    public boolean isStatus() { return status; }
+    public void setStatus(boolean status) { this.status = status; }
+
+    public double getBatteryLevel() { return batteryLevel; }
+    public void setBatteryLevel(double batteryLevel) { this.batteryLevel = batteryLevel; }
+
+    @Override
+    public String toString() {
+        return getDetails();
+    }
+}
+
+// ==========================================
+// 2. КОНКРЕТНЫЕ КЛАССЫ ТРАНСПОРТА
+// ==========================================
+
+class DeliveryDrone extends Transport {
+    private static final long serialVersionUID = 1L;
+    private double maxPayload; // грузоподъемность в кг
+
+    public DeliveryDrone(String id, String model, boolean status, double batteryLevel, double maxPayload) {
+        super(id, model, status, batteryLevel);
+        this.maxPayload = maxPayload;
+    }
+
+    public double getMaxPayload() { return maxPayload; }
+    public void setMaxPayload(double maxPayload) { this.maxPayload = maxPayload; }
+
+    @Override
+    public String getDetails() {
+        return String.format("[Дрон] ID: %s | Модель: %-15s | Статус: %-8s | Заряд: %5.1f%% | Грузоподъемность: %.1f кг",
+                id, model, (status ? "В ПУТИ" : "НА БАЗЕ"), batteryLevel, maxPayload);
+    }
+}
+
+class CargoHelicopter extends Transport {
+    private static final long serialVersionUID = 1L;
+    private double flightRange; // дальность полета в км
+
+    public CargoHelicopter(String id, String model, boolean status, double batteryLevel, double flightRange) {
+        super(id, model, status, batteryLevel);
+        this.flightRange = flightRange;
+    }
+
+    public double getFlightRange() { return flightRange; }
+    public void setFlightRange(double flightRange) { this.flightRange = flightRange; }
+
+    @Override
+    public String getDetails() {
+        return String.format("[Вертолет] ID: %s | Модель: %-15s | Статус: %-8s | Заряд: %5.1f%% | Дальность полета: %.1f км",
+                id, model, (status ? "В ПУТИ" : "НА БАЗЕ"), batteryLevel, flightRange);
+    }
+}
+
+class GroundRobot extends Transport {
+    private static final long serialVersionUID = 1L;
+    private int wheelCondition; // износ колес от 0 до 100
+
+    public GroundRobot(String id, String model, boolean status, double batteryLevel, int wheelCondition) {
+        super(id, model, status, batteryLevel);
+        this.wheelCondition = wheelCondition;
+    }
+
+    public int getWheelCondition() { return wheelCondition; }
+    public void setWheelCondition(int wheelCondition) { this.wheelCondition = wheelCondition; }
+
+    @Override
+    public String getDetails() {
+        return String.format("[Робот] ID: %s | Модель: %-15s | Статус: %-8s | Заряд: %5.1f%% | Состояние колес: %d/100",
+                id, model, (status ? "В ПУТИ" : "НА БАЗЕ"), batteryLevel, wheelCondition);
+    }
+}
+
+// ==========================================
+// 3. ОБОБЩЕННЫЕ ПРАВИЛА ДИСПЕТЧЕРИЗАЦИИ
+// ==========================================
+
+class DispatchRule<T extends Transport> {
+    private String ruleName;
+    private Predicate<T> condition;
+    private Consumer<T> action;
+
+    public DispatchRule(String ruleName, Predicate<T> condition, Consumer<T> action) {
+        this.ruleName = ruleName;
+        this.condition = condition;
+        this.action = action;
+    }
+
+    public String getRuleName() {
+        return ruleName;
+    }
+
+    public void apply(T transport) {
+        if (condition.test(transport)) {
+            action.accept(transport);
+        }
+    }
+}
+
+// ==========================================
+// 4. ГЛАВНЫЙ МЕНЕДЖЕР ЛОГИСТИКИ
+// ==========================================
+
+class LogisticsManager implements Serializable {
+    private static final long serialVersionUID = 1L;
+
+    private Map<String, List<Transport>> hubs = new HashMap<>();
+    private transient List<DispatchRule<? extends Transport>> rules = new ArrayList<>();
+
+    public LogisticsManager() {
+        this.rules = new ArrayList<>();
+    }
+
+    public Map<String, List<Transport>> getHubs() {
+        return hubs;
+    }
+
+    public List<DispatchRule<? extends Transport>> getRules() {
+        return rules;
+    }
+
+    public void addTransport(String hubName, Transport transport) {
+        hubs.computeIfAbsent(hubName, k -> new ArrayList<>()).add(transport);
+    }
+
+    public void addRule(DispatchRule<?> rule) {
+        rules.add(rule);
+        System.out.println("-> Правило \"" + rule.getRuleName() + "\" успешно добавлено в систему.");
+    }
+
+    public Transport getTransportById(String id) {
+        for (List<Transport> list : hubs.values()) {
+            for (Transport t : list) {
+                if (t.getId().equalsIgnoreCase(id)) {
+                    return t;
+                }
+            }
+        }
+        return null;
+    }
+
+    public void applyAllRules() {
+        if (rules.isEmpty()) {
+            System.out.println("[Внимание] Список правил диспетчеризации пуст. Сначала добавьте правила (п. 3 или 4).");
+            return;
+        }
+
+        System.out.println("\n--- ЗАПУСК ПРОВЕРКИ И ПРИМЕНЕНИЯ ПРАВИЛ ---");
+        int appliedCount = 0;
+
+        for (Map.Entry<String, List<Transport>> entry : hubs.entrySet()) {
+            for (Transport transport : entry.getValue()) {
+                for (DispatchRule<?> rule : rules) {
+                    try {
+                        @SuppressWarnings("unchecked")
+                        DispatchRule<Transport> typedRule = (DispatchRule<Transport>) rule;
+                        typedRule.apply(transport);
+                        appliedCount++;
+                    } catch (ClassCastException ignored) {
+                        // Правило не предназначено для данного подтипа транспорта
+                    }
+                }
+            }
+        }
+        System.out.println("-> Проверка завершена. Всего правил проверено/применено: " + appliedCount);
+    }
+
+    public Stream<Transport> getAnalyticsStream() {
+        return hubs.values().stream().flatMap(List::stream);
+    }
+
+    public void saveToFile(String filename) {
+        try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(filename))) {
+            oos.writeObject(hubs);
+            System.out.println("-> Состояние системы успешно сохранено в файл: " + filename);
+        } catch (IOException e) {
+            System.err.println("[Ошибка] Не удалось сохранить состояние: " + e.getMessage());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    public static LogisticsManager loadFromFile(String filename) {
+        File file = new File(filename);
+        LogisticsManager manager = new LogisticsManager();
+        if (file.exists()) {
+            try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(file))) {
+                manager.hubs = (Map<String, List<Transport>>) ois.readObject();
+                System.out.println("-> Найдено предыдущее сохранение. Состояние восстановлено из файла: " + filename);
+                return manager;
+            } catch (Exception e) {
+                System.err.println("[Ошибка] Ошибка чтения файла. Создана пустая логистическая сеть: " + e.getMessage());
+            }
+        } else {
+            System.out.println("-> Файл сохранения не найден. Создана пустая логистическая сеть.");
+        }
+        return manager;
+    }
+}
+
+// ==========================================
+// 5. РЕЕСТР ВАРИАНТОВ (1-36)
+// ==========================================
+
+class VariantRegistry {
+
+    public static DispatchRule<?> getScenarioRule(int scenarioId) {
+        switch (scenarioId) {
+            case 1:
+                return new DispatchRule<DeliveryDrone>(
+                        "Экстренный возврат (Дрон в пути и заряд < 15%)",
+                        d -> d.isInTransit() && d.getBatteryLevel() < 15.0,
+                        DeliveryDrone::recall
+                );
+            case 2:
+                return new DispatchRule<GroundRobot>(
+                        "Техобслуживание робота (на базе и износ колес < 30)",
+                        rob -> !rob.isInTransit() && rob.getWheelCondition() < 30,
+                        rob -> {
+                            rob.setBatteryLevel(100.0);
+                            rob.setWheelCondition(100);
+                        }
+                );
+            case 3:
+                return new DispatchRule<CargoHelicopter>(
+                        "Ограничение полетов вертолета (в пути и дальность < 50 км)",
+                        h -> h.isInTransit() && h.getFlightRange() < 50.0,
+                        CargoHelicopter::recall
+                );
+            case 4:
+                return new DispatchRule<Transport>(
+                        "Авто-запуск (на базе и заряд == 100%)",
+                        t -> !t.isInTransit() && t.getBatteryLevel() == 100.0,
+                        Transport::dispatch
+                );
+            case 5:
+                return new DispatchRule<DeliveryDrone>(
+                        "Оптимизация груза дрона (заряд > 90% -> +5 кг)",
+                        d -> d.getBatteryLevel() > 90.0,
+                        d -> d.setMaxPayload(d.getMaxPayload() + 5.0)
+                );
+            case 6:
+                return new DispatchRule<GroundRobot>(
+                        "Износ роботов (в пути -> износ колес -10)",
+                        GroundRobot::isInTransit,
+                        rob -> rob.setWheelCondition(Math.max(0, rob.getWheelCondition() - 10))
+                );
+            case 7:
+                return new DispatchRule<Transport>(
+                        "Срочная доставка (модель содержит 'Express' и на базе -> dispatch)",
+                        t -> !t.isInTransit() && t.getModel().contains("Express"),
+                        Transport::dispatch
+                );
+            case 8:
+                return new DispatchRule<Transport>(
+                        "Защита батареи (на базе и заряд < 100% -> заряд +10%)",
+                        t -> !t.isInTransit() && t.getBatteryLevel() < 100.0,
+                        t -> t.setBatteryLevel(Math.min(100.0, t.getBatteryLevel() + 10.0))
+                );
+            default:
+                throw new IllegalArgumentException("Неизвестный сценарий: " + scenarioId);
+        }
+    }
+
+    public static String getScenarioDescription(int scenarioId) {
+        switch (scenarioId) {
+            case 1: return "Экстренный возврат: Если Дрон (DeliveryDrone) в пути и batteryLevel < 15.0 -> recall()";
+            case 2: return "Техобслуживание: Если Наземный робот (GroundRobot) на базе и wheelCondition < 30 -> батарея 100, колеса 100";
+            case 3: return "Ограничение полетов: Если Грузовой вертолет (CargoHelicopter) в пути и flightRange < 50.0 -> recall()";
+            case 4: return "Авто-запуск: Если статус любого транспорта 'на базе' и batteryLevel == 100.0 -> dispatch()";
+            case 5: return "Оптимизация груза: Если Дрон (DeliveryDrone) batteryLevel > 90 -> maxPayload + 5 кг";
+            case 6: return "Износ роботов: Если Наземный робот (GroundRobot) в пути -> wheelCondition - 10";
+            case 7: return "Срочная доставка: Если model содержит 'Express' и он на базе -> dispatch()";
+            case 8: return "Защита батареи: Если любой транспорт на базе и заряд < 100 -> заряд +10% (не более 100)";
+            default: return "";
+        }
+    }
+
+    public static void executeAnalytics(int analyticsId, LogisticsManager manager) {
+        switch (analyticsId) {
+            case 1:
+                System.out.println("Результат аналитики: ТОП-3 транспорта с наименьшим уровнем заряда:");
+                manager.getAnalyticsStream()
+                        .sorted(Comparator.comparingDouble(Transport::getBatteryLevel))
+                        .limit(3)
+                        .forEach(t -> System.out.println("  " + t.getDetails()));
+                break;
+
+            case 2:
+                double sum = manager.getAnalyticsStream()
+                        .filter(t -> !t.isInTransit())
+                        .mapToDouble(Transport::getBatteryLevel)
+                        .sum();
+                System.out.printf("Результат аналитики: Общий уровень заряда всех ТС на базе: %.2f%%%n", sum);
+                break;
+
+            case 3:
+                List<String> activeHubs = manager.getHubs().entrySet().stream()
+                        .filter(entry -> entry.getValue().stream().anyMatch(Transport::isInTransit))
+                        .map(Map.Entry::getKey)
+                        .collect(Collectors.toList());
+                System.out.println("Результат аналитики: Хабы с транспортом в пути: " + activeHubs);
+                break;
+
+            case 4:
+                Map<Boolean, List<Transport>> grouped = manager.getAnalyticsStream()
+                        .collect(Collectors.groupingBy(Transport::isInTransit));
+                System.out.println("Результат аналитики: Группировка транспорта по статусу работы:");
+                System.out.println("-> В ПУТИ (true):");
+                grouped.getOrDefault(true, Collections.emptyList()).forEach(t -> System.out.println("   " + t.getDetails()));
+                System.out.println("-> НА БАЗЕ (false):");
+                grouped.getOrDefault(false, Collections.emptyList()).forEach(t -> System.out.println("   " + t.getDetails()));
+                break;
+
+            case 5:
+                Optional<Transport> maxBatteryInTransit = manager.getAnalyticsStream()
+                        .filter(Transport::isInTransit)
+                        .max(Comparator.comparingDouble(Transport::getBatteryLevel));
+                System.out.println("Результат аналитики: ТС с максимальным зарядом среди тех, что в пути:");
+                if (maxBatteryInTransit.isPresent()) {
+                    System.out.println("  " + maxBatteryInTransit.get().getDetails());
+                } else {
+                    System.out.println("  [Информация] Транспорт в пути не найден.");
+                }
+                break;
+
+            case 6:
+                Map<String, Long> classCount = manager.getAnalyticsStream()
+                        .collect(Collectors.groupingBy(t -> t.getClass().getSimpleName(), Collectors.counting()));
+                System.out.println("Результат аналитики: Количество единиц транспорта каждого класса:");
+                classCount.forEach((className, count) -> System.out.println("  " + className + ": " + count));
+                break;
+
+            case 7:
+                boolean hasLowBattery = manager.getAnalyticsStream()
+                        .anyMatch(t -> t.getBatteryLevel() < 5.0);
+                System.out.println("Результат аналитики: Есть ли во всей сети транспорт с зарядом < 5.0%? " + (hasLowBattery ? "ДА" : "НЕТ"));
+                break;
+
+            case 8:
+                String modelsJoined = manager.getAnalyticsStream()
+                        .filter(t -> !t.isInTransit())
+                        .map(Transport::getModel)
+                        .collect(Collectors.joining(", "));
+                System.out.println("Результат аналитики: Модели всех ТС на базе: [" + (modelsJoined.isEmpty() ? "нет" : modelsJoined) + "]");
+                break;
+
+            default:
+                System.out.println("Неизвестный аналитический запрос.");
+        }
+    }
+
+    public static String getAnalyticsDescription(int analyticsId) {
+        switch (analyticsId) {
+            case 1: return "Вывести ТОП-3 транспорта во всей сети с наименьшим уровнем заряда батареи";
+            case 2: return "Посчитать общий уровень заряда всех транспортных средств, которые находятся на базе";
+            case 3: return "Получить список (List) названий всех логистических хабов, в которых есть хотя бы один транспорт в пути";
+            case 4: return "Сгруппировать весь транспорт по статусу работы (в пути / на базе) -> Map<Boolean, List>";
+            case 5: return "Найти транспортное средство с максимальным уровнем заряда батареи среди тех, что в пути (Optional)";
+            case 6: return "Подсчитать точное количество транспортных средств каждого конкретного класса во всей сети (Map<String, Long>)";
+            case 7: return "Проверить (boolean), есть ли во всей сети хотя бы один транспорт с уровнем заряда batteryLevel < 5.0 (anyMatch)";
+            case 8: return "Вернуть одну строку, содержащую модели (model) всех ТС на базе через запятую с пробелом (Collectors.joining)";
+            default: return "";
+        }
+    }
+
+    private static final int[] SCENARIO_BY_VARIANT = {
+            1, 2, 3, 4, 5, 6, 7, 8,       // 1 - 8
+            1, 2, 3, 4, 5, 6, 7, 8,       // 9 - 16
+            6, 7, 1, 2, 3, 4, 5, 8,       // 17 - 24
+            7, 1, 2, 3, 4, 8, 5, 6,       // 25 - 32
+            3, 4, 5, 8                    // 33 - 36
+    };
+
+    private static final int[] ANALYTICS_BY_VARIANT = {
+            1, 2, 3, 4, 5, 6, 7, 8,       // 1 - 8
+            4, 5, 6, 7, 8, 1, 2, 3,       // 9 - 16
+            4, 5, 6, 7, 8, 1, 2, 3,       // 17 - 24
+            7, 8, 1, 2, 3, 4, 5, 6,       // 25 - 32
+            4, 5, 6, 7                    // 33 - 36
+    };
+
+    public static int getScenarioId(int variant) {
+        return SCENARIO_BY_VARIANT[variant - 1];
+    }
+
+    public static int getAnalyticsId(int variant) {
+        return ANALYTICS_BY_VARIANT[variant - 1];
+    }
+}
+
+// ==========================================
+// 6. ТОЧКА ВХОДА И КОНСОЛЬНОЕ МЕНЮ
+// ==========================================
+
+public class Main {
+    private static final String DATA_FILE = "logistics_state.dat";
+
+    public static void main(String[] args) {
+        Scanner scanner = new Scanner(System.in);
+        LogisticsManager manager = LogisticsManager.loadFromFile(DATA_FILE);
+
+        System.out.println("================================================================");
+        System.out.println(" СИСТЕМА УПРАВЛЕНИЯ АВТОМАТИЗИРОВАННОЙ ДОСТАВКОЙ (ЦТУТП 2026) ");
+        System.out.println("================================================================");
+
+        int currentVariant = promptVariant(scanner);
+        int scenarioId = VariantRegistry.getScenarioId(currentVariant);
+        int analyticsId = VariantRegistry.getAnalyticsId(currentVariant);
+
+        // Однократный вывод подробной информации о выбранном варианте
+        System.out.println("\n============================================================");
+        System.out.println(" ВЫБРАН ВАРИАНТ №" + currentVariant);
+        System.out.println(" * Сценарий правила (п. 4):     " + VariantRegistry.getScenarioDescription(scenarioId));
+        System.out.println(" * Аналитический запрос (п. 6): " + VariantRegistry.getAnalyticsDescription(analyticsId));
+        System.out.println("============================================================");
+
+        boolean running = true;
+        while (running) {
+            System.out.println("\n--- ГЛАВНОЕ МЕНЮ ---");
+            System.out.println("1. Добавить новый транспорт в хаб");
+            System.out.println("2. Отправить/вернуть транспорт");
+            System.out.println("3. Добавить базовое правило «Калибровка батареи» (Общее для всех)");
+            System.out.println("4. Добавить правило диспетчеризации в систему");
+            System.out.println("5. Запустить проверку всех правил");
+            System.out.println("6. Выполнить аналитический запрос");
+            System.out.println("7. Показать информацию обо всех добавленных транспортах");
+            System.out.println("8. Выход из программы");
+            System.out.print("Выберите пункт меню: ");
+
+            String input = scanner.nextLine().trim();
+            switch (input) {
+                case "1":
+                    handleAddNewTransport(scanner, manager);
+                    break;
+
+                case "2":
+                    handleToggleStatus(scanner, manager);
+                    break;
+
+                case "3":
+                    DispatchRule<Transport> calibrationRule = new DispatchRule<>(
+                            "Калибровка батареи",
+                            t -> t.getBatteryLevel() < 0.0,
+                            t -> {
+                                t.setBatteryLevel(0.0);
+                                if (t.isInTransit()) {
+                                    t.recall();
+                                }
+                            }
+                    );
+                    manager.addRule(calibrationRule);
+                    break;
+
+                case "4":
+                    DispatchRule<?> variantRule = VariantRegistry.getScenarioRule(scenarioId);
+                    manager.addRule(variantRule);
+                    break;
+
+                case "5":
+                    manager.applyAllRules();
+                    break;
+
+                case "6":
+                    System.out.println("\n--- ВЫПОЛНЕНИЕ АНАЛИТИКИ (STREAM API) ---");
+                    VariantRegistry.executeAnalytics(analyticsId, manager);
+                    break;
+
+                case "7":
+                    handleShowAllTransports(manager);
+                    break;
+
+                case "8":
+                    manager.saveToFile(DATA_FILE);
+                    System.out.println("Завершение работы программы.");
+                    running = false;
+                    break;
+
+                default:
+                    System.out.println("[Ошибка] Некорректный ввод. Выберите пункт от 1 до 8.");
+                    break;
+            }
+        }
+    }
+
+    private static int promptVariant(Scanner scanner) {
+        while (true) {
+            System.out.print("\nВведите номер вашего варианта (от 1 до 36): ");
+            try {
+                int varNum = Integer.parseInt(scanner.nextLine().trim());
+                if (varNum >= 1 && varNum <= 36) {
+                    return varNum;
+                }
+                System.out.println("Номер варианта должен быть в диапазоне от 1 до 36.");
+            } catch (NumberFormatException e) {
+                System.out.println("Пожалуйста, введите корректное число.");
+            }
+        }
+    }
+
+    private static void handleAddNewTransport(Scanner scanner, LogisticsManager manager) {
+        System.out.println("\n--- ДОБАВЛЕНИЕ НОВОГО ТРАНСПОРТА ---");
+        System.out.print("Введите название хаба (например, Хаб-1): ");
+        String hub = scanner.nextLine().trim();
+
+        System.out.println("Выберите тип транспорта:");
+        System.out.println("1. Дрон-доставщик (DeliveryDrone)");
+        System.out.println("2. Грузовой вертолет (CargoHelicopter)");
+        System.out.println("3. Наземный робот-курьер (GroundRobot)");
+        System.out.print("Тип: ");
+        String typeChoice = scanner.nextLine().trim();
+
+        System.out.print("Введите уникальный ID: ");
+        String id = scanner.nextLine().trim();
+
+        System.out.print("Введите модель: ");
+        String model = scanner.nextLine().trim();
+
+        System.out.print("Транспорт сразу в пути? (да/нет): ");
+        boolean inTransit = scanner.nextLine().trim().equalsIgnoreCase("да");
+
+        System.out.print("Введите уровень заряда батареи (0.0 - 100.0): ");
+        double battery = Double.parseDouble(scanner.nextLine().trim().replace(',', '.'));
+
+        switch (typeChoice) {
+            case "1":
+                System.out.print("Введите макс. грузоподъемность (кг): ");
+                double payload = Double.parseDouble(scanner.nextLine().trim().replace(',', '.'));
+                manager.addTransport(hub, new DeliveryDrone(id, model, inTransit, battery, payload));
+                break;
+            case "2":
+                System.out.print("Введите дальность полета (км): ");
+                double range = Double.parseDouble(scanner.nextLine().trim().replace(',', '.'));
+                manager.addTransport(hub, new CargoHelicopter(id, model, inTransit, battery, range));
+                break;
+            case "3":
+                System.out.print("Введите износ колес (0 - 100): ");
+                int wheels = Integer.parseInt(scanner.nextLine().trim());
+                manager.addTransport(hub, new GroundRobot(id, model, inTransit, battery, wheels));
+                break;
+            default:
+                System.out.println("[Ошибка] Неверный тип транспорта. Добавление отменено.");
+                return;
+        }
+        System.out.println("-> Транспорт " + id + " успешно добавлен в " + hub);
+    }
+
+    private static void handleToggleStatus(Scanner scanner, LogisticsManager manager) {
+        System.out.print("\nВведите ID транспорта для изменения статуса (отправить/вернуть): ");
+        String id = scanner.nextLine().trim();
+        Transport transport = manager.getTransportById(id);
+
+        if (transport == null) {
+            System.out.println("[Ошибка] Транспорт с ID '" + id + "' не найден.");
+            return;
+        }
+
+        if (transport.isInTransit()) {
+            transport.recall();
+            System.out.println("-> Транспорт " + id + " возвращен на базу (recall). Статус: НА БАЗЕ.");
+        } else {
+            transport.dispatch();
+            System.out.println("-> Транспорт " + id + " отправлен на маршрут (dispatch). Статус: В ПУТИ.");
+        }
+    }
+
+    private static void handleShowAllTransports(LogisticsManager manager) {
+        System.out.println("\n================ ТРАНСПОРТНЫЕ СРЕДСТВА В СЕТИ ================");
+        Map<String, List<Transport>> hubs = manager.getHubs();
+        boolean hasTransports = hubs.values().stream().anyMatch(list -> !list.isEmpty());
+
+        if (!hasTransports) {
+            System.out.println("Логистическая сеть пуста. Транспорт еще не добавлен.");
+            System.out.println("==============================================================");
+            return;
+        }
+
+        for (Map.Entry<String, List<Transport>> entry : hubs.entrySet()) {
+            String hubName = entry.getKey();
+            List<Transport> transports = entry.getValue();
+            if (transports.isEmpty()) {
+                continue;
+            }
+
+            System.out.println("\n[Хаб: \"" + hubName + "\"] (Всего единиц: " + transports.size() + ")");
+            for (Transport t : transports) {
+                String typeName;
+                String uniqueInfo;
+
+                if (t instanceof DeliveryDrone) {
+                    typeName = "Дрон-доставщик (DeliveryDrone)";
+                    uniqueInfo = String.format("Грузоподъемность: %.1f кг", ((DeliveryDrone) t).getMaxPayload());
+                } else if (t instanceof CargoHelicopter) {
+                    typeName = "Грузовой вертолет (CargoHelicopter)";
+                    uniqueInfo = String.format("Дальность полета: %.1f км", ((CargoHelicopter) t).getFlightRange());
+                } else if (t instanceof GroundRobot) {
+                    typeName = "Наземный робот-курьер (GroundRobot)";
+                    uniqueInfo = String.format("Состояние колес: %d/100", ((GroundRobot) t).getWheelCondition());
+                } else {
+                    typeName = "Транспорт";
+                    uniqueInfo = "—";
+                }
+
+                System.out.printf("  • Вид: %-34s | ID: %-8s | Модель: %-15s | В пути: %-3s (Статус: %-7s) | Заряд: %5.1f%% | %s%n",
+                        typeName,
+                        t.getId(),
+                        t.getModel(),
+                        (t.isInTransit() ? "ДА" : "НЕТ"),
+                        (t.isInTransit() ? "В ПУТИ" : "НА БАЗЕ"),
+                        t.getBatteryLevel(),
+                        uniqueInfo
+                );
+            }
+        }
+        System.out.println("==============================================================");
+    }
+}
