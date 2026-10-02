@@ -1,0 +1,783 @@
+import java.util.*;
+import java.util.function.Consumer;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+// ==========================================
+// 1. ИНТЕРФЕЙСЫ И МОДЕЛИ ДАННЫХ
+// ==========================================
+
+interface Controllable {
+    void turnOn();
+    void turnOff();
+    boolean isOn();
+}
+
+abstract class Device implements Controllable {
+    protected String id;
+    protected String name;
+    protected boolean status;
+    protected double powerConsumption;
+
+    public Device(String id, String name, boolean status, double powerConsumption) {
+        this.id = id;
+        this.name = name;
+        this.status = status;
+        this.powerConsumption = powerConsumption;
+    }
+
+    @Override
+    public void turnOn() {
+        this.status = true;
+    }
+
+    @Override
+    public void turnOff() {
+        this.status = false;
+    }
+
+    @Override
+    public boolean isOn() {
+        return this.status;
+    }
+
+    public abstract String getDetails();
+
+    public String getId() { return id; }
+    public void setId(String id) { this.id = id; }
+
+    public String getName() { return name; }
+    public void setName(String name) { this.name = name; }
+
+    public boolean isStatus() { return status; }
+    public void setStatus(boolean status) { this.status = status; }
+
+    public double getPowerConsumption() { return powerConsumption; }
+    public void setPowerConsumption(double powerConsumption) { this.powerConsumption = powerConsumption; }
+
+    @Override
+    public String toString() {
+        return getDetails();
+    }
+}
+
+class SmartLight extends Device {
+    private int brightness; // 0 - 100
+    private String color;
+
+    public SmartLight(String id, String name, boolean status, double powerConsumption, int brightness, String color) {
+        super(id, name, status, powerConsumption);
+        this.brightness = Math.max(0, Math.min(100, brightness));
+        this.color = color;
+    }
+
+    public int getBrightness() { return brightness; }
+    public void setBrightness(int brightness) {
+        this.brightness = Math.max(0, Math.min(100, brightness));
+    }
+
+    public String getColor() { return color; }
+    public void setColor(String color) { this.color = color; }
+
+    @Override
+    public String getDetails() {
+        return String.format("[Умная лампа] ID: %s | Имя: '%s' | Статус: %s | Потребление: %.1f Вт | Яркость: %d%% | Цвет: %s",
+                id, name, (status ? "ВКЛ" : "ВЫКЛ"), powerConsumption, brightness, color);
+    }
+}
+
+class SmartThermostat extends Device {
+    private double targetTemperature;
+
+    public SmartThermostat(String id, String name, boolean status, double powerConsumption, double targetTemperature) {
+        super(id, name, status, powerConsumption);
+        this.targetTemperature = targetTemperature;
+    }
+
+    public double getTargetTemperature() { return targetTemperature; }
+    public void setTargetTemperature(double targetTemperature) { this.targetTemperature = targetTemperature; }
+
+    @Override
+    public String getDetails() {
+        return String.format("[Термостат] ID: %s | Имя: '%s' | Статус: %s | Потребление: %.1f Вт | Целевая темп.: %.1f°C",
+                id, name, (status ? "ВКЛ" : "ВЫКЛ"), powerConsumption, targetTemperature);
+    }
+}
+
+class SmartSocket extends Device {
+    private double currentLoad;
+
+    public SmartSocket(String id, String name, boolean status, double powerConsumption, double currentLoad) {
+        super(id, name, status, powerConsumption);
+        this.currentLoad = currentLoad;
+    }
+
+    public double getCurrentLoad() { return currentLoad; }
+    public void setCurrentLoad(double currentLoad) { this.currentLoad = currentLoad; }
+
+    @Override
+    public String getDetails() {
+        return String.format("[Умная розетка] ID: %s | Имя: '%s' | Статус: %s | Потребление: %.1f Вт | Нагрузка: %.1f Вт",
+                id, name, (status ? "ВКЛ" : "ВЫКЛ"), powerConsumption, currentLoad);
+    }
+}
+
+// ==========================================
+// 2. СЦЕНАРИИ И МЕНЕДЖЕР УМНОГО ДОМА
+// ==========================================
+
+class Scenario<T extends Device> {
+    private final String name;
+    private final Predicate<T> condition;
+    private final Consumer<T> action;
+
+    public Scenario(String name, Predicate<T> condition, Consumer<T> action) {
+        this.name = name;
+        this.condition = condition;
+        this.action = action;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public void apply(T device) {
+        if (condition.test(device)) {
+            action.accept(device);
+        }
+    }
+}
+
+class SmartHomeManager {
+    private final Map<String, List<Device>> rooms = new LinkedHashMap<>();
+    private final List<Scenario<? extends Device>> scenarios = new ArrayList<>();
+
+    public Map<String, List<Device>> getRooms() {
+        return rooms;
+    }
+
+    public List<Scenario<? extends Device>> getScenarios() {
+        return scenarios;
+    }
+
+    public void addDevice(String room, Device device) {
+        rooms.computeIfAbsent(room, k -> new ArrayList<>()).add(device);
+    }
+
+    public void addScenario(Scenario<?> scenario) {
+        scenarios.add(scenario);
+    }
+
+    public Device getDeviceById(String id) {
+        for (List<Device> deviceList : rooms.values()) {
+            for (Device device : deviceList) {
+                if (device.getId().equalsIgnoreCase(id.trim())) {
+                    return device;
+                }
+            }
+        }
+        return null;
+    }
+
+    public void executeAllScenarios() {
+        if (scenarios.isEmpty()) {
+            System.out.println("(!) В системе нет добавленных сценариев. Добавьте базовый (3) или индивидуальный (4) сценарий.");
+            return;
+        }
+
+        System.out.println("\n--- Запуск проверки всех сценариев автоматизации ---");
+        for (Map.Entry<String, List<Device>> entry : rooms.entrySet()) {
+            for (Device device : entry.getValue()) {
+                for (Scenario<? extends Device> scenario : scenarios) {
+                    tryApplyScenario(scenario, device);
+                }
+            }
+        }
+        System.out.println("--- Проверка сценариев завершена ---\n");
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T extends Device> void tryApplyScenario(Scenario<T> scenario, Device device) {
+        try {
+            scenario.apply((T) device);
+        } catch (ClassCastException ignored) {
+            // Устройство несовместимого типа пропускается сценарием
+        }
+    }
+
+    public Stream<Device> getAnalyticsStream() {
+        return rooms.values().stream().flatMap(List::stream);
+    }
+}
+
+// ==========================================
+// 3. БАЗА ВСЕХ 36 ВАРИАНТОВ
+// ==========================================
+
+enum ScenarioType {
+    SOCKET_ENERGY_SAVING(
+            "Энергосбережение",
+            "Если розетка (SmartSocket) включена и её currentLoad > 2000 Вт, перевести её статус в 'Выключено'.",
+            () -> new Scenario<SmartSocket>(
+                    "Энергосбережение",
+                    s -> s.isOn() && s.getCurrentLoad() > 2000.0,
+                    s -> {
+                        System.out.printf("[Сработал сценарий 'Энергосбережение'] Розетка '%s' (нагрузка %.1f Вт > 2000 Вт) выключена.%n",
+                                s.getName(), s.getCurrentLoad());
+                        s.turnOff();
+                    }
+            )
+    ),
+    CALM_SLEEP(
+            "Спокойный сон",
+            "Если это умная лампа (SmartLight) и её brightness > 50, установить яркость на 10 и изменить цвет на 'Warm'.",
+            () -> new Scenario<SmartLight>(
+                    "Спокойный сон",
+                    l -> l.getBrightness() > 50,
+                    l -> {
+                        System.out.printf("[Сработал сценарий 'Спокойный сон'] Лампа '%s' (яркость %d%% > 50) переведена на яркость 10%% и цвет 'Warm'.%n",
+                                l.getName(), l.getBrightness());
+                        l.setBrightness(10);
+                        l.setColor("Warm");
+                    }
+            )
+    ),
+    ECO_CLIMATE(
+            "Эко-режим климата",
+            "Если термостат (SmartThermostat) включен и targetTemperature > 25.0, снизить его температуру ровно до 22.0.",
+            () -> new Scenario<SmartThermostat>(
+                    "Эко-режим климата",
+                    t -> t.isOn() && t.getTargetTemperature() > 25.0,
+                    t -> {
+                        System.out.printf("[Сработал сценарий 'Эко-режим климата'] Термостат '%s' (целевая темп. %.1f°C > 25°C) снижен до 22.0°C.%n",
+                                t.getName(), t.getTargetTemperature());
+                        t.setTargetTemperature(22.0);
+                    }
+            )
+    ),
+    SMART_DEPOWER(
+            "Умное обесточивание",
+            "Если статус любого устройства 'Включено', но его powerConsumption равно 0, изменить статус этого устройства на 'Выключено'.",
+            () -> new Scenario<Device>(
+                    "Умное обесточивание",
+                    d -> d.isOn() && d.getPowerConsumption() == 0.0,
+                    d -> {
+                        System.out.printf("[Сработал сценарий 'Умное обесточивание'] Устройство '%s' включено, но потребляет 0 Вт -> выключено.%n",
+                                d.getName());
+                        d.turnOff();
+                    }
+            )
+    ),
+    PRESENCE_IMITATION(
+            "Имитация присутствия",
+            "Если устройство является лампой (SmartLight) и в данный момент выключено, включить его и установить brightness на 100.",
+            () -> new Scenario<SmartLight>(
+                    "Имитация присутствия",
+                    l -> !l.isOn(),
+                    l -> {
+                        System.out.printf("[Сработал сценарий 'Имитация присутствия'] Лампа '%s' была выключена -> включена на яркость 100%%.%n",
+                                l.getName());
+                        l.turnOn();
+                        l.setBrightness(100);
+                    }
+            )
+    ),
+    SAFE_HEATING(
+            "Безопасный обогрев",
+            "Если термостат (SmartThermostat) имеет установленную температуру ниже 15.0, включить его и установить температуру на 20.0.",
+            () -> new Scenario<SmartThermostat>(
+                    "Безопасный обогрев",
+                    t -> t.getTargetTemperature() < 15.0,
+                    t -> {
+                        System.out.printf("[Сработал сценарий 'Безопасный обогрев'] Термостат '%s' (темп. %.1f°C < 15°C) включен и установлен на 20.0°C.%n",
+                                t.getName(), t.getTargetTemperature());
+                        t.turnOn();
+                        t.setTargetTemperature(20.0);
+                    }
+            )
+    ),
+    NIGHT_LIGHT(
+            "Ночная подсветка",
+            "Если лампа (SmartLight) имеет в названии (name) слово 'Коридор' и она выключена, включить её, задать цвет 'Red' и яркость 5.",
+            () -> new Scenario<SmartLight>(
+                    "Ночная подсветка",
+                    l -> l.getName() != null && l.getName().toLowerCase().contains("коридор") && !l.isOn(),
+                    l -> {
+                        System.out.printf("[Сработал сценарий 'Ночная подсветка'] Лампа '%s' включена: цвет 'Red', яркость 5%%.%n",
+                                l.getName());
+                        l.turnOn();
+                        l.setColor("Red");
+                        l.setBrightness(5);
+                    }
+            )
+    ),
+    TV_PROTECTION(
+            "Защита ТВ",
+            "Если имя умной розетки (SmartSocket) содержит 'TV' и она потребляет меньше 10 Вт, принудительно выключить ее.",
+            () -> new Scenario<SmartSocket>(
+                    "Защита ТВ",
+                    s -> s.getName() != null && s.getName().contains("TV") && s.getPowerConsumption() < 10.0,
+                    s -> {
+                        System.out.printf("[Сработал сценарий 'Защита ТВ'] Розетка '%s' (потребление %.1f Вт < 10 Вт) принудительно выключена.%n",
+                                s.getName(), s.getPowerConsumption());
+                        s.turnOff();
+                    }
+            )
+    );
+
+    private final String title;
+    private final String description;
+    private final ScenarioFactory factory;
+
+    interface ScenarioFactory {
+        Scenario<? extends Device> create();
+    }
+
+    ScenarioType(String title, String description, ScenarioFactory factory) {
+        this.title = title;
+        this.description = description;
+        this.factory = factory;
+    }
+
+    public String getTitle() { return title; }
+    public String getDescription() { return description; }
+    public Scenario<? extends Device> create() { return factory.create(); }
+}
+
+enum AnalyticsType {
+    TOP_3(
+            "ТОП-3 самых энергозатратных устройств",
+            "Вывести ТОП-3 самых энергозатратных устройств во всем доме (сортировка по убыванию powerConsumption).",
+            manager -> {
+                System.out.println("\n[Результат аналитики: ТОП-3 самых энергозатратных устройств]");
+                List<Device> top3 = manager.getAnalyticsStream()
+                        .sorted(Comparator.comparingDouble(Device::getPowerConsumption).reversed())
+                        .limit(3)
+                        .collect(Collectors.toList());
+
+                if (top3.isEmpty()) {
+                    System.out.println("В доме нет добавленных устройств.");
+                } else {
+                    for (int i = 0; i < top3.size(); i++) {
+                        Device d = top3.get(i);
+                        System.out.printf(" %d. %s (ID: %s) -> %.1f Вт%n", i + 1, d.getName(), d.getId(), d.getPowerConsumption());
+                    }
+                }
+            }
+    ),
+    TOTAL_POWER(
+            "Общее суммарное энергопотребление",
+            "Посчитать общее суммарное энергопотребление всех включенных устройств в доме.",
+            manager -> {
+                System.out.println("\n[Результат аналитики: Суммарное энергопотребление]");
+                double total = manager.getAnalyticsStream()
+                        .filter(Device::isOn)
+                        .mapToDouble(Device::getPowerConsumption)
+                        .sum();
+                System.out.printf("Суммарное потребление всех включенных устройств: %.2f Вт%n", total);
+            }
+    ),
+    ROOMS_WITH_OFF_DEVICES(
+            "Комнаты с выключенными устройствами",
+            "Получить список (List) названий всех комнат, в которых находится хотя бы одно выключенное устройство.",
+            manager -> {
+                System.out.println("\n[Результат аналитики: Комнаты с выключенными устройствами]");
+                List<String> rooms = manager.getRooms().entrySet().stream()
+                        .filter(entry -> entry.getValue().stream().anyMatch(d -> !d.isOn()))
+                        .map(Map.Entry::getKey)
+                        .collect(Collectors.toList());
+
+                if (rooms.isEmpty()) {
+                    System.out.println("Все устройства во всех комнатах включены (или в доме еще нет устройств).");
+                } else {
+                    System.out.println("Список комнат с выключенными устройствами: " + rooms);
+                }
+            }
+    ),
+    GROUP_BY_STATUS(
+            "Группировка устройств по статусу работы",
+            "Сгруппировать все устройства по статусу их работы (Включены/Выключены), получив словарь Map<Boolean, List>.",
+            manager -> {
+                System.out.println("\n[Результат аналитики: Группировка устройств по статусу]");
+                Map<Boolean, List<Device>> grouped = manager.getAnalyticsStream()
+                        .collect(Collectors.partitioningBy(Device::isOn));
+
+                System.out.println("--- Включенные устройства (true) ---");
+                List<Device> onDevices = grouped.getOrDefault(true, Collections.emptyList());
+                if (onDevices.isEmpty()) System.out.println(" (нет)");
+                onDevices.forEach(d -> System.out.println("  • " + d.getDetails()));
+
+                System.out.println("--- Выключенные устройства (false) ---");
+                List<Device> offDevices = grouped.getOrDefault(false, Collections.emptyList());
+                if (offDevices.isEmpty()) System.out.println(" (нет)");
+                offDevices.forEach(d -> System.out.println("  • " + d.getDetails()));
+            }
+    ),
+    MIN_POWER_DEVICE(
+            "Устройство с минимальным энергопотреблением",
+            "Найти устройство с минимальным энергопотреблением среди всех включенных устройств дома (использовать Optional).",
+            manager -> {
+                System.out.println("\n[Результат аналитики: Устройство с мин. энергопотреблением]");
+                Optional<Device> minDevice = manager.getAnalyticsStream()
+                        .filter(Device::isOn)
+                        .min(Comparator.comparingDouble(Device::getPowerConsumption));
+
+                if (minDevice.isPresent()) {
+                    Device d = minDevice.get();
+                    System.out.printf("Найдено устройство: '%s' (ID: %s) с потреблением %.1f Вт%n",
+                            d.getName(), d.getId(), d.getPowerConsumption());
+                } else {
+                    System.out.println("В доме нет включенных устройств.");
+                }
+            }
+    ),
+    COUNT_BY_CLASS(
+            "Количество устройств каждого конкретного класса",
+            "Подсчитать точное количество устройств каждого конкретного класса в доме (вернуть Map<String, Long>).",
+            manager -> {
+                System.out.println("\n[Результат аналитики: Подсчет устройств по классам]");
+                Map<String, Long> countMap = manager.getAnalyticsStream()
+                        .collect(Collectors.groupingBy(
+                                d -> d.getClass().getSimpleName(),
+                                Collectors.counting()
+                        ));
+
+                if (countMap.isEmpty()) {
+                    System.out.println("В доме нет добавленных устройств.");
+                } else {
+                    countMap.forEach((className, count) ->
+                            System.out.printf(" Класс '%s': %d шт.%n", className, count));
+                }
+            }
+    ),
+    ANY_OVER_3000(
+            "Проверка на устройство мощнее 3000 Вт",
+            "Проверить (вернуть boolean), есть ли во всем доме хотя бы одно устройство, потребляющее более 3000 Вт (использовать anyMatch).",
+            manager -> {
+                System.out.println("\n[Результат аналитики: Проверка потребления > 3000 Вт]");
+                boolean exists = manager.getAnalyticsStream()
+                        .anyMatch(d -> d.getPowerConsumption() > 3000.0);
+                System.out.printf("Результат проверки (anyMatch): %b (%s)%n",
+                        exists, (exists ? "Да, найдено устройство с потреблением > 3000 Вт" : "Нет таких устройств"));
+            }
+    ),
+    JOIN_ON_NAMES(
+            "Имена всех включенных устройств через запятую",
+            "Вернуть одну строку, содержащую имена (name) всех включенных устройств через запятую с пробелом (использовать Collectors.joining).",
+            manager -> {
+                System.out.println("\n[Результат аналитики: Имена включенных устройств]");
+                String names = manager.getAnalyticsStream()
+                        .filter(Device::isOn)
+                        .map(Device::getName)
+                        .collect(Collectors.joining(", "));
+
+                if (names.isEmpty()) {
+                    System.out.println("В доме нет включенных устройств.");
+                } else {
+                    System.out.println("Включенные устройства: " + names);
+                }
+            }
+    );
+
+    private final String title;
+    private final String description;
+    private final Consumer<SmartHomeManager> executor;
+
+    AnalyticsType(String title, String description, Consumer<SmartHomeManager> executor) {
+        this.title = title;
+        this.description = description;
+        this.executor = executor;
+    }
+
+    public String getTitle() { return title; }
+    public String getDescription() { return description; }
+    public void execute(SmartHomeManager manager) { executor.accept(manager); }
+}
+
+class VariantConfig {
+    private final int variantNumber;
+    private final ScenarioType scenarioType;
+    private final AnalyticsType analyticsType;
+
+    public VariantConfig(int variantNumber, ScenarioType scenarioType, AnalyticsType analyticsType) {
+        this.variantNumber = variantNumber;
+        this.scenarioType = scenarioType;
+        this.analyticsType = analyticsType;
+    }
+
+    public int getVariantNumber() { return variantNumber; }
+    public ScenarioType getScenarioType() { return scenarioType; }
+    public AnalyticsType getAnalyticsType() { return analyticsType; }
+
+    public static VariantConfig getByNumber(int num) {
+        switch (num) {
+            case 1:  return new VariantConfig(1, ScenarioType.SOCKET_ENERGY_SAVING, AnalyticsType.TOP_3);
+            case 2:  return new VariantConfig(2, ScenarioType.CALM_SLEEP, AnalyticsType.TOTAL_POWER);
+            case 3:  return new VariantConfig(3, ScenarioType.ECO_CLIMATE, AnalyticsType.ROOMS_WITH_OFF_DEVICES);
+            case 4:  return new VariantConfig(4, ScenarioType.SMART_DEPOWER, AnalyticsType.GROUP_BY_STATUS);
+            case 5:  return new VariantConfig(5, ScenarioType.PRESENCE_IMITATION, AnalyticsType.MIN_POWER_DEVICE);
+            case 6:  return new VariantConfig(6, ScenarioType.SAFE_HEATING, AnalyticsType.COUNT_BY_CLASS);
+            case 7:  return new VariantConfig(7, ScenarioType.NIGHT_LIGHT, AnalyticsType.ANY_OVER_3000);
+            case 8:  return new VariantConfig(8, ScenarioType.TV_PROTECTION, AnalyticsType.JOIN_ON_NAMES);
+            case 9:  return new VariantConfig(9, ScenarioType.ECO_CLIMATE, AnalyticsType.GROUP_BY_STATUS);
+            case 10: return new VariantConfig(10, ScenarioType.CALM_SLEEP, AnalyticsType.MIN_POWER_DEVICE);
+            case 11: return new VariantConfig(11, ScenarioType.SOCKET_ENERGY_SAVING, AnalyticsType.COUNT_BY_CLASS);
+            case 12: return new VariantConfig(12, ScenarioType.PRESENCE_IMITATION, AnalyticsType.TOP_3);
+            case 13: return new VariantConfig(13, ScenarioType.SAFE_HEATING, AnalyticsType.JOIN_ON_NAMES);
+            case 14: return new VariantConfig(14, ScenarioType.NIGHT_LIGHT, AnalyticsType.ROOMS_WITH_OFF_DEVICES);
+            case 15: return new VariantConfig(15, ScenarioType.SMART_DEPOWER, AnalyticsType.ANY_OVER_3000);
+            case 16: return new VariantConfig(16, ScenarioType.TV_PROTECTION, AnalyticsType.GROUP_BY_STATUS);
+            case 17: return new VariantConfig(17, ScenarioType.SMART_DEPOWER, AnalyticsType.MIN_POWER_DEVICE);
+            case 18: return new VariantConfig(18, ScenarioType.PRESENCE_IMITATION, AnalyticsType.COUNT_BY_CLASS);
+            case 19: return new VariantConfig(19, ScenarioType.SAFE_HEATING, AnalyticsType.TOP_3);
+            case 20: return new VariantConfig(20, ScenarioType.NIGHT_LIGHT, AnalyticsType.TOTAL_POWER);
+            case 21: return new VariantConfig(21, ScenarioType.SOCKET_ENERGY_SAVING, AnalyticsType.JOIN_ON_NAMES);
+            case 22: return new VariantConfig(22, ScenarioType.CALM_SLEEP, AnalyticsType.ANY_OVER_3000);
+            case 23: return new VariantConfig(23, ScenarioType.ECO_CLIMATE, AnalyticsType.GROUP_BY_STATUS);
+            case 24: return new VariantConfig(24, ScenarioType.TV_PROTECTION, AnalyticsType.ROOMS_WITH_OFF_DEVICES);
+            case 25: return new VariantConfig(25, ScenarioType.SAFE_HEATING, AnalyticsType.GROUP_BY_STATUS);
+            case 26: return new VariantConfig(26, ScenarioType.NIGHT_LIGHT, AnalyticsType.MIN_POWER_DEVICE);
+            case 27: return new VariantConfig(27, ScenarioType.SMART_DEPOWER, AnalyticsType.COUNT_BY_CLASS);
+            case 28: return new VariantConfig(28, ScenarioType.PRESENCE_IMITATION, AnalyticsType.ANY_OVER_3000);
+            case 29: return new VariantConfig(29, ScenarioType.TV_PROTECTION, AnalyticsType.JOIN_ON_NAMES);
+            case 30: return new VariantConfig(30, ScenarioType.CALM_SLEEP, AnalyticsType.TOP_3);
+            case 31: return new VariantConfig(31, ScenarioType.SOCKET_ENERGY_SAVING, AnalyticsType.TOTAL_POWER);
+            case 32: return new VariantConfig(32, ScenarioType.ECO_CLIMATE, AnalyticsType.ROOMS_WITH_OFF_DEVICES);
+            case 33: return new VariantConfig(33, ScenarioType.TV_PROTECTION, AnalyticsType.ANY_OVER_3000);
+            case 34: return new VariantConfig(34, ScenarioType.NIGHT_LIGHT, AnalyticsType.JOIN_ON_NAMES);
+            case 35: return new VariantConfig(35, ScenarioType.PRESENCE_IMITATION, AnalyticsType.TOP_3);
+            case 36: return new VariantConfig(36, ScenarioType.CALM_SLEEP, AnalyticsType.TOTAL_POWER);
+            default: throw new IllegalArgumentException("Номер варианта должен быть в диапазоне от 1 до 36!");
+        }
+    }
+}
+
+// ==========================================
+// 4. ТОЧКА ВХОДА (MAIN)
+// ==========================================
+
+public class Main {
+    public static void main(String[] args) {
+        Scanner scanner = new Scanner(System.in);
+
+        // 1. Запрос номера варианта[span_0](start_span)[span_0](end_span)
+        System.out.println("=======================================================================");
+        System.out.println("   СИСТЕМА АВТОМАТИЗАЦИИ «УМНЫЙ ДОМ» НА ОСНОВЕ ДИНАМИЧЕСКИХ СЦЕНАРИЕВ  ");
+        System.out.println("=======================================================================");
+
+        int variantNumber = 0;
+        while (variantNumber < 1 || variantNumber > 36) {
+            System.out.print("Введите номер вашего варианта (от 1 до 36): ");
+            try {
+                variantNumber = Integer.parseInt(scanner.nextLine().trim());
+                if (variantNumber < 1 || variantNumber > 36) {
+                    System.out.println("(!) Ошибка: номер должен быть числом от 1 до 36.");
+                }
+            } catch (NumberFormatException e) {
+                System.out.println("(!) Пожалуйста, введите корректное целое число.");
+            }
+        }
+
+        VariantConfig userVariant = VariantConfig.getByNumber(variantNumber);
+
+        // 2. Информацию о выбранном варианте показываем СТРОГО ТОЛЬКО В САМОМ НАЧАЛЕ[span_1](start_span)[span_1](end_span)
+        System.out.println("\n" + "=".repeat(75));
+        System.out.printf("             ИНФОРМАЦИЯ О ВЫБРАННОМ ВАРИАНТЕ № %d%n", userVariant.getVariantNumber());
+        System.out.println("-".repeat(75));
+        System.out.println("1. ИНДИВИДУАЛЬНЫЙ СЦЕНАРИЙ (Пункт меню 4):");
+        System.out.println("   • Название: " + userVariant.getScenarioType().getTitle());
+        System.out.println("   • Правило:  " + userVariant.getScenarioType().getDescription());
+        System.out.println();
+        System.out.println("2. ИНДИВИДУАЛЬНАЯ АНАЛИТИКА STREAM API (Пункт меню 6):");
+        System.out.println("   • Название: " + userVariant.getAnalyticsType().getTitle());
+        System.out.println("   • Задача:   " + userVariant.getAnalyticsType().getDescription());
+        System.out.println("=".repeat(75) + "\n");
+
+        // 3. Создание чистого дома без предзагрузок и сохранения состояния
+        SmartHomeManager manager = new SmartHomeManager();
+
+        // 4. Меню управления с добавленным пунктом 8
+        boolean running = true;
+        while (running) {
+            printMenu(userVariant);
+            System.out.print("Выберите действие (1-8): ");
+            String input = scanner.nextLine().trim();
+
+            switch (input) {
+                case "1":
+                    handleAddNewDevice(manager, scanner);
+                    break;
+                case "2":
+                    handleToggleDevice(manager, scanner);
+                    break;
+                case "3":
+                    handleAddBaseScenario(manager);
+                    break;
+                case "4":
+                    handleAddVariantScenario(manager, userVariant);
+                    break;
+                case "5":
+                    manager.executeAllScenarios();
+                    break;
+                case "6":
+                    userVariant.getAnalyticsType().execute(manager);
+                    break;
+                case "7":
+                    System.out.println("Выход из программы.");
+                    running = false;
+                    break;
+                case "8":
+                    handlePrintAllDevices(manager);
+                    break;
+                default:
+                    System.out.println("(!) Неверная команда. Введите число от 1 до 8.");
+            }
+        }
+    }
+
+    private static void printMenu(VariantConfig variant) {
+        System.out.println("\n----------------- МЕНЮ УПРАВЛЕНИЯ -----------------");
+        System.out.println("1. Добавить новое устройство в комнату");
+        System.out.println("2. Включить / Выключить устройство по ID");
+        System.out.println("3. Добавить базовый сценарий «Сброс фантомного потребления»");
+        System.out.printf("4. Добавить индивидуальный сценарий: [%s]%n", variant.getScenarioType().getTitle());
+        System.out.println("5. Запустить проверку всех сценариев");
+        System.out.printf("6. Выполнить аналитический запрос: [%s]%n", variant.getAnalyticsType().getTitle());
+        System.out.println("7. Выход из программы");
+        System.out.println("8. Просмотр всех устройств и их характеристик");
+        System.out.println("---------------------------------------------------");
+    }
+
+    private static void handleAddNewDevice(SmartHomeManager manager, Scanner scanner) {
+        System.out.println("\n--- Добавление нового устройства ---");
+        System.out.print("Введите название комнаты: ");
+        String room = scanner.nextLine().trim();
+
+        System.out.println("Выберите тип устройства:");
+        System.out.println(" 1. SmartLight (Умная лампа)");
+        System.out.println(" 2. SmartThermostat (Умный термостат)");
+        System.out.println(" 3. SmartSocket (Умная розетка)");
+        System.out.print("Ваш выбор: ");
+        String type = scanner.nextLine().trim();
+
+        System.out.print("Введите уникальный ID: ");
+        String id = scanner.nextLine().trim();
+        if (manager.getDeviceById(id) != null) {
+            System.out.println("(!) Устройство с таким ID уже существует!");
+            return;
+        }
+
+        System.out.print("Введите имя устройства (например, 'Люстра Коридор', 'TV Зал'): ");
+        String name = scanner.nextLine().trim();
+
+        System.out.print("Устройство включено? (1 - Да, 0 - Нет): ");
+        boolean status = "1".equals(scanner.nextLine().trim());
+
+        System.out.print("Текущее энергопотребление (Вт, например 45.0): ");
+        double power = parseDouble(scanner.nextLine().trim(), 0.0);
+
+        Device createdDevice;
+        switch (type) {
+            case "1":
+                System.out.print("Яркость (0 - 100): ");
+                int brightness = parseInt(scanner.nextLine().trim(), 50);
+                System.out.print("Цвет свечения (например, White, Warm, Red): ");
+                String color = scanner.nextLine().trim();
+                createdDevice = new SmartLight(id, name, status, power, brightness, color);
+                break;
+            case "2":
+                System.out.print("Целевая температура (°C, например 22.5): ");
+                double temp = parseDouble(scanner.nextLine().trim(), 20.0);
+                createdDevice = new SmartThermostat(id, name, status, power, temp);
+                break;
+            case "3":
+                System.out.print("Подключенная нагрузка (Вт, например 2100.0): ");
+                double load = parseDouble(scanner.nextLine().trim(), power);
+                createdDevice = new SmartSocket(id, name, status, power, load);
+                break;
+            default:
+                System.out.println("(!) Неверный тип устройства. Отмена добавления.");
+                return;
+        }
+
+        manager.addDevice(room, createdDevice);
+        System.out.println("-> Устройство успешно добавлено: " + createdDevice.getDetails());
+    }
+
+    private static void handleToggleDevice(SmartHomeManager manager, Scanner scanner) {
+        System.out.print("Введите ID устройства для изменения статуса: ");
+        String id = scanner.nextLine().trim();
+        Device device = manager.getDeviceById(id);
+
+        if (device == null) {
+            System.out.println("(!) Устройство с ID '" + id + "' не найдено.");
+            return;
+        }
+
+        if (device.isOn()) {
+            device.turnOff();
+            System.out.printf("-> Устройство '%s' (ID: %s) успешно ВЫКЛЮЧЕНО.%n", device.getName(), device.getId());
+        } else {
+            device.turnOn();
+            System.out.printf("-> Устройство '%s' (ID: %s) успешно ВКЛЮЧЕНО.%n", device.getName(), device.getId());
+        }
+    }
+
+    private static void handleAddBaseScenario(SmartHomeManager manager) {
+        Scenario<Device> phantomScenario = new Scenario<>(
+                "Сброс фантомного потребления",
+                d -> !d.isOn() && d.getPowerConsumption() > 0.0,
+                d -> {
+                    System.out.printf("[Сработал базовый сценарий] Устройство '%s' выключено, но потребляло %.1f Вт. Сброшено в 0.0 Вт.%n",
+                            d.getName(), d.getPowerConsumption());
+                    d.setPowerConsumption(0.0);
+                }
+        );
+        manager.addScenario(phantomScenario);
+        System.out.println("-> Базовый сценарий «Сброс фантомного потребления» добавлен в систему.");
+    }
+
+    private static void handleAddVariantScenario(SmartHomeManager manager, VariantConfig variant) {
+        Scenario<? extends Device> sc = variant.getScenarioType().create();
+        manager.addScenario(sc);
+        System.out.printf("-> Индивидуальный сценарий варианта № %d «%s» успешно добавлен в систему.%n",
+                variant.getVariantNumber(), sc.getName());
+    }
+
+    private static void handlePrintAllDevices(SmartHomeManager manager) {
+        System.out.println("\n================ ВСЕ УСТРОЙСТВА В СИСТЕМЕ ================");
+        if (manager.getRooms().isEmpty()) {
+            System.out.println("В доме пока нет ни одной комнаты и ни одного добавленного устройства.");
+        } else {
+            manager.getRooms().forEach((room, devices) -> {
+                System.out.printf("%nКомната: [%s] (Количество устройств: %d)%n", room, devices.size());
+                if (devices.isEmpty()) {
+                    System.out.println("  (в этой комнате нет устройств)");
+                } else {
+                    for (int i = 0; i < devices.size(); i++) {
+                        System.out.printf("  %d. %s%n", i + 1, devices.get(i).getDetails());
+                    }
+                }
+            });
+        }
+        System.out.println("==========================================================\n");
+    }
+
+    private static double parseDouble(String text, double defaultValue) {
+        try {
+            return Double.parseDouble(text.replace(',', '.'));
+        } catch (Exception e) {
+            return defaultValue;
+        }
+    }
+
+    private static int parseInt(String text, int defaultValue) {
+        try {
+            return Integer.parseInt(text);
+        } catch (Exception e) {
+            return defaultValue;
+        }
+    }
+}
+
