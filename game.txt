@@ -1,0 +1,1459 @@
+=======================================================================
+ЭКЗАМЕНАЦИОННОЕ ЗАДАНИЕ ПО JAVA
+СИСТЕМА КОМПЛЕКТАЦИИ ЗАКАЗОВ НА СКЛАДЕ
+Варианты: 2, 8, 10
+=======================================================================
+
+ЧТО ВНУТРИ
+  Раздел 1  — общие файлы (одинаковы для всех трёх вариантов)
+  Раздел 2  — вариант 2  (WarehouseManager.java + Main.java)
+  Раздел 3  — вариант 8  (WarehouseManager.java + Main.java)
+  Раздел 4  — вариант 10 (WarehouseManager.java + Main.java)
+  Раздел 5  — как собрать и запустить, проверенные результаты
+
+ЧТО НЕ ВХОДИТ (по просьбе)
+  Бонусное задание «работа с файлами и сериализация» (warehouse_state.dat,
+  ObjectOutputStream/ObjectInputStream, интерфейс Serializable) НЕ реализовано.
+
+ЧТО ДОБАВЛЕНО К МЕНЮ ЗАДАНИЯ
+  Отдельный пункт «6. Информация обо всех добавленных заказах» — выводит
+  сведения по каждому заказу (getDetails), счётчики «ожидает/выполнено»
+  и текущий остаток. Выход из программы вынесен в пункт 0.
+  (В тексте задания выход был пунктом 6; если для сдачи нужно строго
+  6 = выход, поменяйте местами пункты 6 и 0 в Main — там всё в одном месте.)
+
+СТРУКТУРА ПРОЕКТА (как в задании)
+  variant-N/
+  └── src
+      ├── interfaces
+      │   └── StockDemand.java
+      ├── models
+      │   ├── Order.java
+      │   ├── UnitOrder.java
+      │   └── PackOrder.java
+      ├── logic
+      │   └── WarehouseManager.java
+      └── main
+          └── Main.java
+
+РЕАЛИЗОВАННЫЕ ПРАВИЛА
+  Вариант 2  обработка: «неприкосновенный резерв» — сохранить не менее
+                        четверти запаса на начало запуска, округлённой вверх;
+                        порядок: priority ↓, потребность ↓, id ↑.
+             аналитика: Map<Integer, Long> — customerId → суммарная потребность
+                        его ожидающих заказов.
+  Вариант 8  обработка: та же (неприкосновенный резерв).
+             аналитика: Optional<Order> — ожидающий заказ, помещающийся в текущий
+                        запас: max priority, затем max потребность, затем min id.
+  Вариант 10 обработка: «клиент целиком» — все ожидающие заказы клиента вместе
+                        либо ни один; клиенты по суммарной потребности ↑,
+                        затем customerId ↑; внутри группы — id ↑.
+             аналитика: Map<String, Long> — имя класса заказа → единицы товара
+                        по выполненным заказам; оба типа всегда, при отсутствии 0.
+
+=======================================================================
+РАЗДЕЛ 1. ОБЩИЕ ФАЙЛЫ (одинаковы для вариантов 2, 8, 10)
+=======================================================================
+
+
+-----------------------------------------------------------------------
+ФАЙЛ: src/interfaces/StockDemand.java
+-----------------------------------------------------------------------
+package interfaces;
+
+/**
+ * Потребность в единицах товара.
+ * Реализуется заказами: каждый заказ сам знает, сколько единиц ему нужно.
+ */
+public interface StockDemand {
+
+    /** @return потребность заказа в единицах товара (всегда > 0). */
+    int getRequiredUnits();
+}
+
+
+-----------------------------------------------------------------------
+ФАЙЛ: src/models/Order.java
+-----------------------------------------------------------------------
+package models;
+
+import interfaces.StockDemand;
+
+/**
+ * Абстрактный заказ на складе одного вида товара.
+ * id, customerId, priority и параметры заказа после создания не изменяются;
+ * изменяемым является только признак выполнения fulfilled.
+ */
+public abstract class Order implements StockDemand {
+
+    private final int id;
+    private final int customerId;
+    private final int priority;
+    private boolean fulfilled;
+
+    protected Order(int id, int customerId, int priority) {
+        if (id <= 0) {
+            throw new IllegalArgumentException("id заказа должен быть положительным");
+        }
+        if (customerId <= 0) {
+            throw new IllegalArgumentException("customerId клиента должен быть положительным");
+        }
+        if (priority < 1 || priority > 5) {
+            throw new IllegalArgumentException("priority должен быть от 1 до 5");
+        }
+        this.id = id;
+        this.customerId = customerId;
+        this.priority = priority;
+        this.fulfilled = false;
+    }
+
+    public int getId() {
+        return id;
+    }
+
+    public int getCustomerId() {
+        return customerId;
+    }
+
+    public int getPriority() {
+        return priority;
+    }
+
+    public boolean isFulfilled() {
+        return fulfilled;
+    }
+
+    /** Отметить заказ выполненным (товар по нему больше не списывается). */
+    public void markFulfilled() {
+        this.fulfilled = true;
+    }
+
+    /** Потребность заказа в единицах товара — вычисляется полиморфно наследниками. */
+    @Override
+    public abstract int getRequiredUnits();
+
+    /** Сведения о заказе, его потребности и состоянии. */
+    public String getDetails() {
+        return String.format("%s{id=%d, customerId=%d, priority=%d, требуется=%d ед., %s}",
+                getClass().getSimpleName(), id, customerId, priority, getRequiredUnits(),
+                fulfilled ? "выполнен" : "ожидает");
+    }
+
+    @Override
+    public String toString() {
+        return getDetails();
+    }
+}
+
+
+-----------------------------------------------------------------------
+ФАЙЛ: src/models/UnitOrder.java
+-----------------------------------------------------------------------
+package models;
+
+/** Поштучный заказ: потребность равна количеству штук. */
+public class UnitOrder extends Order {
+
+    private final int quantity;
+
+    public UnitOrder(int id, int customerId, int priority, int quantity) {
+        super(id, customerId, priority);
+        if (quantity < 1 || quantity > 1000) {
+            throw new IllegalArgumentException("quantity должен быть от 1 до 1000");
+        }
+        this.quantity = quantity;
+    }
+
+    public int getQuantity() {
+        return quantity;
+    }
+
+    @Override
+    public int getRequiredUnits() {
+        return quantity;
+    }
+}
+
+
+-----------------------------------------------------------------------
+ФАЙЛ: src/models/PackOrder.java
+-----------------------------------------------------------------------
+package models;
+
+/**
+ * Заказ упаковками: потребность равна числу упаковок, умноженному на размер упаковки.
+ * Все упаковки одного заказа имеют одинаковый размер.
+ */
+public class PackOrder extends Order {
+
+    private final int packCount;
+    private final int packSize;
+
+    public PackOrder(int id, int customerId, int priority, int packCount, int packSize) {
+        super(id, customerId, priority);
+        if (packCount < 1 || packCount > 1000) {
+            throw new IllegalArgumentException("packCount должен быть от 1 до 1000");
+        }
+        if (packSize < 1 || packSize > 1000) {
+            throw new IllegalArgumentException("packSize должен быть от 1 до 1000");
+        }
+        this.packCount = packCount;
+        this.packSize = packSize;
+    }
+
+    public int getPackCount() {
+        return packCount;
+    }
+
+    public int getPackSize() {
+        return packSize;
+    }
+
+    @Override
+    public int getRequiredUnits() {
+        return packCount * packSize;
+    }
+}
+
+
+
+=======================================================================
+РАЗДЕЛ. ВАРИАНТ 2
+=======================================================================
+
+
+-----------------------------------------------------------------------
+ФАЙЛ: src/logic/WarehouseManager.java  (вариант 2)
+-----------------------------------------------------------------------
+package logic;
+
+import models.Order;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+/**
+ * Менеджер склада одного вида товара.
+ *
+ * <p>Вариант 2.
+ * <ul>
+ *   <li>Обработка — «неприкосновенный резерв»: сохранить не менее четверти запаса
+ *       на начало запуска, округлённой вверх; порядок priority ↓, потребность ↓, id ↑.</li>
+ *   <li>Аналитика — Map&lt;customerId, суммарная потребность его ожидающих заказов&gt;.</li>
+ * </ul>
+ */
+public class WarehouseManager<T extends Order> {
+
+    /** Максимальная вместимость склада. */
+    public static final int MAX_STOCK = 1_000_000;
+
+    private final List<T> orders = new ArrayList<>();
+    private int stock;
+
+    public WarehouseManager(int stock) {
+        if (stock < 0 || stock > MAX_STOCK) {
+            throw new IllegalArgumentException("остаток должен быть от 0 до " + MAX_STOCK);
+        }
+        this.stock = stock;
+    }
+
+    /**
+     * Добавить новый невыполненный заказ.
+     *
+     * @return false без изменения данных, если order == null, повторяется id
+     *         или заказ уже выполнен; иначе true.
+     */
+    public boolean add(T order) {
+        if (order == null || order.isFulfilled()) {
+            return false;
+        }
+        boolean duplicateId = orders.stream().anyMatch(o -> o.getId() == order.getId());
+        if (duplicateId) {
+            return false;
+        }
+        orders.add(order);
+        return true;
+    }
+
+    /**
+     * Пополнить запас на amount единиц.
+     *
+     * @return false без изменения данных при недопустимом значении или превышении
+     *         максимального остатка; иначе true.
+     */
+    public boolean restock(int amount) {
+        if (amount < 1 || amount > MAX_STOCK) {
+            return false;
+        }
+        if ((long) stock + amount > MAX_STOCK) {
+            return false;
+        }
+        stock += amount;
+        return true;
+    }
+
+    /** @return текущий остаток товара в единицах. */
+    public int getStock() {
+        return stock;
+    }
+
+    /** @return поток всех заказов склада (для аналитики). */
+    public Stream<T> getAnalyticsStream() {
+        return orders.stream();
+    }
+
+    /**
+     * Обработать ожидающие заказы за один запуск.
+     * Суммарная потребность считается в long; заказ выполняется только целиком.
+     *
+     * @return заказы, выполненные именно этим вызовом, в порядке обработки.
+     */
+    public List<T> process() {
+        // Запас на начало запуска и неприкосновенный резерв (четверть, округлённая вверх).
+        final long reserve = ((long) stock + 3L) / 4L;
+
+        Predicate<T> pending = order -> !order.isFulfilled();
+        // Заказ можно выполнить, только если после списания остаток не уйдёт ниже резерва.
+        // Предикат читает текущий stock, поэтому корректно работает по ходу обработки.
+        Predicate<T> keepsReserve = order -> (long) stock - order.getRequiredUnits() >= reserve;
+
+        Comparator<Order> byVariant = Comparator
+                .comparingInt(Order::getPriority).reversed()
+                .thenComparing(Comparator.comparingInt(Order::getRequiredUnits).reversed())
+                .thenComparingInt(Order::getId);
+
+        List<T> queue = orders.stream()
+                .filter(pending)
+                .sorted(byVariant)
+                .collect(Collectors.toList());
+
+        List<T> fulfilledNow = new ArrayList<>();
+        for (T order : queue) {
+            // каждый ожидающий заказ рассматривается не более одного раза;
+            // при нехватке товара он остаётся ожидающим, остаток не меняется
+            if (pending.test(order) && keepsReserve.test(order)) {
+                stock -= order.getRequiredUnits();
+                order.markFulfilled();
+                fulfilledNow.add(order);
+            }
+        }
+        return fulfilledNow;
+    }
+
+    /**
+     * Аналитический запрос варианта 2 (только Stream API, данные не изменяются).
+     *
+     * @return customerId → общая потребность его ожидающих заказов;
+     *         клиенты без ожидающих заказов в результат не попадают.
+     */
+    public Map<Integer, Long> analytics() {
+        return getAnalyticsStream()
+                .filter(order -> !order.isFulfilled())
+                .collect(Collectors.groupingBy(
+                        Order::getCustomerId,
+                        Collectors.summingLong(Order::getRequiredUnits)));
+    }
+}
+
+
+-----------------------------------------------------------------------
+ФАЙЛ: src/main/Main.java               (вариант 2)
+-----------------------------------------------------------------------
+package main;
+
+import logic.WarehouseManager;
+import models.Order;
+import models.PackOrder;
+import models.UnitOrder;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Scanner;
+import java.util.stream.Collectors;
+
+/**
+ * Консольное приложение «система комплектации заказов на складе».
+ * Вариант 2.
+ */
+public class Main {
+
+    private static final int INITIAL_STOCK = 15;
+    private static final int VARIANT = 2;
+
+    /** Сигнал о конце входного потока (Ctrl+D) — не аварийное завершение программы. */
+    private static final class InputEnded extends RuntimeException {
+    }
+
+    public static void main(String[] args) {
+        List<Order> initial = initialOrders();
+        WarehouseManager<Order> manager = new WarehouseManager<>(INITIAL_STOCK);
+        for (Order order : initial) {
+            manager.add(order);
+        }
+
+        System.out.println("Система комплектации заказов на складе. Вариант " + VARIANT + ".");
+        System.out.println("Начальный остаток: " + INITIAL_STOCK + " ед., заказов: " + initial.size() + ".");
+
+        Scanner scanner = new Scanner(System.in);
+        try {
+            boolean running = true;
+            while (running) {
+                printMenu(manager);
+                int choice = readInt(scanner, "Ваш выбор: ");
+                switch (choice) {
+                    case 1:
+                        addOrder(scanner, manager);
+                        break;
+                    case 2:
+                        showOrders(manager);
+                        break;
+                    case 3:
+                        restock(scanner, manager);
+                        break;
+                    case 4:
+                        processOrders(manager);
+                        break;
+                    case 5:
+                        runAnalytics(manager);
+                        break;
+                    case 6:
+                        showFullInfo(manager);
+                        break;
+                    case 0:
+                        running = false;
+                        break;
+                    default:
+                        System.out.println("Ошибка: такого пункта меню нет.");
+                }
+            }
+            System.out.println("Работа завершена.");
+        } catch (InputEnded ended) {
+            System.out.println();
+            System.out.println("Ввод завершён (конец потока). Выход.");
+        }
+    }
+
+    /* ==================== начальные данные ==================== */
+
+    private static List<Order> initialOrders() {
+        List<Order> orders = new ArrayList<>();
+        orders.add(new UnitOrder(1, 1, 5, 9));
+        orders.add(new UnitOrder(4, 2, 2, 3));
+        orders.add(new UnitOrder(5, 3, 4, 5));
+        orders.add(new UnitOrder(8, 5, 1, 1));
+        orders.add(new UnitOrder(9, 2, 1, 2));
+        orders.add(new UnitOrder(11, 1, 1, 2));
+        orders.add(new PackOrder(2, 1, 4, 2, 3));
+        orders.add(new PackOrder(3, 2, 5, 2, 2));
+        orders.add(new PackOrder(6, 4, 3, 2, 5));
+        orders.add(new PackOrder(7, 3, 4, 1, 2));
+        orders.add(new PackOrder(10, 2, 1, 1, 3));
+        return orders;
+    }
+
+    /* ==================== меню и пункты ==================== */
+
+    private static void printMenu(WarehouseManager<Order> manager) {
+        System.out.println();
+        System.out.println("===== СКЛАД: комплектация заказов =====");
+        System.out.println("Остаток на складе: " + manager.getStock() + " ед.");
+        System.out.println(" 1. Добавить заказ (поштучный или упаковками)");
+        System.out.println(" 2. Показать все заказы и текущий остаток");
+        System.out.println(" 3. Пополнить запас товара");
+        System.out.println(" 4. Обработать заказы (выполненные этим запуском)");
+        System.out.println(" 5. Аналитический запрос (вариант " + VARIANT + ")");
+        System.out.println(" 6. Информация обо всех добавленных заказах");
+        System.out.println(" 0. Выход");
+    }
+
+    private static void addOrder(Scanner scanner, WarehouseManager<Order> manager) {
+        int type = readInt(scanner, "Тип заказа (1 — поштучный, 2 — упаковками): ");
+        if (type != 1 && type != 2) {
+            System.out.println("Ошибка: тип должен быть 1 или 2. Заказ не добавлен.");
+            return;
+        }
+        int id = readInt(scanner, "id заказа (положительное): ");
+        int customerId = readInt(scanner, "customerId клиента (положительное): ");
+        int priority = readInt(scanner, "priority (1..5): ");
+
+        Order order;
+        try {
+            if (type == 1) {
+                int quantity = readInt(scanner, "quantity (1..1000): ");
+                order = new UnitOrder(id, customerId, priority, quantity);
+            } else {
+                int packCount = readInt(scanner, "packCount (1..1000): ");
+                int packSize = readInt(scanner, "packSize (1..1000): ");
+                order = new PackOrder(id, customerId, priority, packCount, packSize);
+            }
+        } catch (IllegalArgumentException e) {
+            System.out.println("Ошибка: " + e.getMessage() + ". Заказ не добавлен.");
+            return;
+        }
+
+        if (manager.add(order)) {
+            System.out.println("Заказ добавлен: " + order.getDetails());
+        } else {
+            System.out.println("Ошибка: заказ не добавлен (повторный id или заказ уже выполнен). "
+                    + "Данные не изменены.");
+        }
+    }
+
+    private static void showOrders(WarehouseManager<Order> manager) {
+        List<Order> orders = manager.getAnalyticsStream().collect(Collectors.toList());
+        System.out.println("Остаток на складе: " + manager.getStock() + " ед. Всего заказов: "
+                + orders.size() + ".");
+        if (orders.isEmpty()) {
+            System.out.println("Список заказов пуст.");
+            return;
+        }
+        System.out.printf("%-4s %-11s %-8s %-10s %-12s %s%n",
+                "id", "тип", "клиент", "priority", "потребность", "состояние");
+        for (Order order : orders) {
+            System.out.printf("%-4d %-11s %-8d %-10d %-12d %s%n",
+                    order.getId(),
+                    order.getClass().getSimpleName(),
+                    order.getCustomerId(),
+                    order.getPriority(),
+                    order.getRequiredUnits(),
+                    order.isFulfilled() ? "выполнен" : "ожидает");
+        }
+    }
+
+    private static void restock(Scanner scanner, WarehouseManager<Order> manager) {
+        int amount = readInt(scanner, "Сколько единиц добавить (1..1000000): ");
+        if (manager.restock(amount)) {
+            System.out.println("Запас пополнен. Текущий остаток: " + manager.getStock() + " ед.");
+        } else {
+            System.out.println("Ошибка: недопустимое количество или превышен максимум склада. "
+                    + "Данные не изменены.");
+        }
+    }
+
+    private static void processOrders(WarehouseManager<Order> manager) {
+        List<Order> fulfilled = manager.process();
+        if (fulfilled.isEmpty()) {
+            System.out.println("В этом запуске не выполнен ни один заказ.");
+        } else {
+            System.out.println("Выполнено этим запуском: " + fulfilled.size());
+            for (Order order : fulfilled) {
+                System.out.println("  " + order.getDetails());
+            }
+        }
+        System.out.println("Текущий остаток: " + manager.getStock() + " ед.");
+    }
+
+    /** Пункт 5 — аналитический запрос варианта. */
+    private static void runAnalytics(WarehouseManager<Order> manager) {
+        Map<Integer, Long> demandByClient = manager.analytics();
+        System.out.println("Вариант 2. Потребность ожидающих заказов по клиентам "
+                + "(customerId → единицы):");
+        if (demandByClient.isEmpty()) {
+            System.out.println("  Ожидающих заказов нет — выборка пуста.");
+            return;
+        }
+        demandByClient.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(entry -> System.out.println(
+                        "  клиент " + entry.getKey() + " → " + entry.getValue() + " ед."));
+    }
+
+    /** Пункт 6 — сведения обо всех добавленных заказах. */
+    private static void showFullInfo(WarehouseManager<Order> manager) {
+        List<Order> orders = manager.getAnalyticsStream().collect(Collectors.toList());
+        long pending = orders.stream().filter(order -> !order.isFulfilled()).count();
+
+        System.out.println("===== Информация обо всех добавленных заказах =====");
+        System.out.println("Всего заказов: " + orders.size()
+                + " (ожидает: " + pending + ", выполнено: " + (orders.size() - pending) + ")");
+        System.out.println("Остаток на складе: " + manager.getStock() + " ед.");
+        if (orders.isEmpty()) {
+            System.out.println("Заказов пока нет.");
+            return;
+        }
+        int index = 1;
+        for (Order order : orders) {
+            System.out.println(index++ + ") " + order.getDetails());
+        }
+    }
+
+    /* ==================== ввод ==================== */
+
+    /**
+     * Прочитать целое число. Ошибочный ввод не завершает программу:
+     * выводится сообщение и запрос повторяется. При конце потока — сигнал InputEnded.
+     */
+    private static int readInt(Scanner scanner, String prompt) {
+        while (true) {
+            System.out.print(prompt);
+            if (!scanner.hasNextLine()) {
+                throw new InputEnded();
+            }
+            String line = scanner.nextLine().trim();
+            if (line.isEmpty()) {
+                System.out.println("Ошибка: пустой ввод. Повторите.");
+                continue;
+            }
+            try {
+                return Integer.parseInt(line);
+            } catch (NumberFormatException e) {
+                System.out.println("Ошибка: нужно целое число. Повторите.");
+            }
+        }
+    }
+}
+
+
+
+=======================================================================
+РАЗДЕЛ. ВАРИАНТ 8
+=======================================================================
+
+
+-----------------------------------------------------------------------
+ФАЙЛ: src/logic/WarehouseManager.java  (вариант 8)
+-----------------------------------------------------------------------
+package logic;
+
+import models.Order;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Optional;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+/**
+ * Менеджер склада одного вида товара.
+ *
+ * <p>Вариант 8.
+ * <ul>
+ *   <li>Обработка — «неприкосновенный резерв»: сохранить не менее четверти запаса
+ *       на начало запуска, округлённой вверх; порядок priority ↓, потребность ↓, id ↑.</li>
+ *   <li>Аналитика — ожидающий заказ, помещающийся в текущий запас: наибольший priority,
+ *       затем наибольшая потребность, затем меньший id (Optional&lt;Order&gt;).</li>
+ * </ul>
+ */
+public class WarehouseManager<T extends Order> {
+
+    /** Максимальная вместимость склада. */
+    public static final int MAX_STOCK = 1_000_000;
+
+    private final List<T> orders = new ArrayList<>();
+    private int stock;
+
+    public WarehouseManager(int stock) {
+        if (stock < 0 || stock > MAX_STOCK) {
+            throw new IllegalArgumentException("остаток должен быть от 0 до " + MAX_STOCK);
+        }
+        this.stock = stock;
+    }
+
+    /**
+     * Добавить новый невыполненный заказ.
+     *
+     * @return false без изменения данных, если order == null, повторяется id
+     *         или заказ уже выполнен; иначе true.
+     */
+    public boolean add(T order) {
+        if (order == null || order.isFulfilled()) {
+            return false;
+        }
+        boolean duplicateId = orders.stream().anyMatch(o -> o.getId() == order.getId());
+        if (duplicateId) {
+            return false;
+        }
+        orders.add(order);
+        return true;
+    }
+
+    /**
+     * Пополнить запас на amount единиц.
+     *
+     * @return false без изменения данных при недопустимом значении или превышении
+     *         максимального остатка; иначе true.
+     */
+    public boolean restock(int amount) {
+        if (amount < 1 || amount > MAX_STOCK) {
+            return false;
+        }
+        if ((long) stock + amount > MAX_STOCK) {
+            return false;
+        }
+        stock += amount;
+        return true;
+    }
+
+    /** @return текущий остаток товара в единицах. */
+    public int getStock() {
+        return stock;
+    }
+
+    /** @return поток всех заказов склада (для аналитики). */
+    public Stream<T> getAnalyticsStream() {
+        return orders.stream();
+    }
+
+    /**
+     * Обработать ожидающие заказы за один запуск.
+     * Суммарная потребность считается в long; заказ выполняется только целиком.
+     *
+     * @return заказы, выполненные именно этим вызовом, в порядке обработки.
+     */
+    public List<T> process() {
+        // Запас на начало запуска и неприкосновенный резерв (четверть, округлённая вверх).
+        final long reserve = ((long) stock + 3L) / 4L;
+
+        Predicate<T> pending = order -> !order.isFulfilled();
+        // Заказ можно выполнить, только если после списания остаток не уйдёт ниже резерва.
+        // Предикат читает текущий stock, поэтому корректно работает по ходу обработки.
+        Predicate<T> keepsReserve = order -> (long) stock - order.getRequiredUnits() >= reserve;
+
+        Comparator<Order> byVariant = Comparator
+                .comparingInt(Order::getPriority).reversed()
+                .thenComparing(Comparator.comparingInt(Order::getRequiredUnits).reversed())
+                .thenComparingInt(Order::getId);
+
+        List<T> queue = orders.stream()
+                .filter(pending)
+                .sorted(byVariant)
+                .collect(Collectors.toList());
+
+        List<T> fulfilledNow = new ArrayList<>();
+        for (T order : queue) {
+            // каждый ожидающий заказ рассматривается не более одного раза;
+            // при нехватке товара он остаётся ожидающим, остаток не меняется
+            if (pending.test(order) && keepsReserve.test(order)) {
+                stock -= order.getRequiredUnits();
+                order.markFulfilled();
+                fulfilledNow.add(order);
+            }
+        }
+        return fulfilledNow;
+    }
+
+    /**
+     * Аналитический запрос варианта 8 (только Stream API, данные не изменяются).
+     * Ограничения правила обработки (резерв) при аналитике не применяются.
+     *
+     * @return ожидающий заказ, помещающийся в текущий запас, с наибольшим priority,
+     *         затем наибольшей потребностью и меньшим id; пустой Optional, если такого нет.
+     */
+    public Optional<T> analytics() {
+        return getAnalyticsStream()
+                .filter(order -> !order.isFulfilled())
+                .filter(order -> order.getRequiredUnits() <= stock)
+                .max(Comparator
+                        .comparingInt(Order::getPriority)
+                        .thenComparingInt(Order::getRequiredUnits)
+                        // меньший id должен победить, поэтому сортировка по id — обратная
+                        .thenComparing(Comparator.comparingInt(Order::getId).reversed()));
+    }
+}
+
+
+-----------------------------------------------------------------------
+ФАЙЛ: src/main/Main.java               (вариант 8)
+-----------------------------------------------------------------------
+package main;
+
+import logic.WarehouseManager;
+import models.Order;
+import models.PackOrder;
+import models.UnitOrder;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.Scanner;
+import java.util.stream.Collectors;
+
+/**
+ * Консольное приложение «система комплектации заказов на складе».
+ * Вариант 8.
+ */
+public class Main {
+
+    private static final int INITIAL_STOCK = 15;
+    private static final int VARIANT = 8;
+
+    /** Сигнал о конце входного потока (Ctrl+D) — не аварийное завершение программы. */
+    private static final class InputEnded extends RuntimeException {
+    }
+
+    public static void main(String[] args) {
+        List<Order> initial = initialOrders();
+        WarehouseManager<Order> manager = new WarehouseManager<>(INITIAL_STOCK);
+        for (Order order : initial) {
+            manager.add(order);
+        }
+
+        System.out.println("Система комплектации заказов на складе. Вариант " + VARIANT + ".");
+        System.out.println("Начальный остаток: " + INITIAL_STOCK + " ед., заказов: " + initial.size() + ".");
+
+        Scanner scanner = new Scanner(System.in);
+        try {
+            boolean running = true;
+            while (running) {
+                printMenu(manager);
+                int choice = readInt(scanner, "Ваш выбор: ");
+                switch (choice) {
+                    case 1:
+                        addOrder(scanner, manager);
+                        break;
+                    case 2:
+                        showOrders(manager);
+                        break;
+                    case 3:
+                        restock(scanner, manager);
+                        break;
+                    case 4:
+                        processOrders(manager);
+                        break;
+                    case 5:
+                        runAnalytics(manager);
+                        break;
+                    case 6:
+                        showFullInfo(manager);
+                        break;
+                    case 0:
+                        running = false;
+                        break;
+                    default:
+                        System.out.println("Ошибка: такого пункта меню нет.");
+                }
+            }
+            System.out.println("Работа завершена.");
+        } catch (InputEnded ended) {
+            System.out.println();
+            System.out.println("Ввод завершён (конец потока). Выход.");
+        }
+    }
+
+    /* ==================== начальные данные ==================== */
+
+    private static List<Order> initialOrders() {
+        List<Order> orders = new ArrayList<>();
+        orders.add(new UnitOrder(1, 1, 5, 9));
+        orders.add(new UnitOrder(4, 2, 2, 3));
+        orders.add(new UnitOrder(5, 3, 4, 5));
+        orders.add(new UnitOrder(8, 5, 1, 1));
+        orders.add(new UnitOrder(9, 2, 1, 2));
+        orders.add(new UnitOrder(11, 1, 1, 2));
+        orders.add(new PackOrder(2, 1, 4, 2, 3));
+        orders.add(new PackOrder(3, 2, 5, 2, 2));
+        orders.add(new PackOrder(6, 4, 3, 2, 5));
+        orders.add(new PackOrder(7, 3, 4, 1, 2));
+        orders.add(new PackOrder(10, 2, 1, 1, 3));
+        return orders;
+    }
+
+    /* ==================== меню и пункты ==================== */
+
+    private static void printMenu(WarehouseManager<Order> manager) {
+        System.out.println();
+        System.out.println("===== СКЛАД: комплектация заказов =====");
+        System.out.println("Остаток на складе: " + manager.getStock() + " ед.");
+        System.out.println(" 1. Добавить заказ (поштучный или упаковками)");
+        System.out.println(" 2. Показать все заказы и текущий остаток");
+        System.out.println(" 3. Пополнить запас товара");
+        System.out.println(" 4. Обработать заказы (выполненные этим запуском)");
+        System.out.println(" 5. Аналитический запрос (вариант " + VARIANT + ")");
+        System.out.println(" 6. Информация обо всех добавленных заказах");
+        System.out.println(" 0. Выход");
+    }
+
+    private static void addOrder(Scanner scanner, WarehouseManager<Order> manager) {
+        int type = readInt(scanner, "Тип заказа (1 — поштучный, 2 — упаковками): ");
+        if (type != 1 && type != 2) {
+            System.out.println("Ошибка: тип должен быть 1 или 2. Заказ не добавлен.");
+            return;
+        }
+        int id = readInt(scanner, "id заказа (положительное): ");
+        int customerId = readInt(scanner, "customerId клиента (положительное): ");
+        int priority = readInt(scanner, "priority (1..5): ");
+
+        Order order;
+        try {
+            if (type == 1) {
+                int quantity = readInt(scanner, "quantity (1..1000): ");
+                order = new UnitOrder(id, customerId, priority, quantity);
+            } else {
+                int packCount = readInt(scanner, "packCount (1..1000): ");
+                int packSize = readInt(scanner, "packSize (1..1000): ");
+                order = new PackOrder(id, customerId, priority, packCount, packSize);
+            }
+        } catch (IllegalArgumentException e) {
+            System.out.println("Ошибка: " + e.getMessage() + ". Заказ не добавлен.");
+            return;
+        }
+
+        if (manager.add(order)) {
+            System.out.println("Заказ добавлен: " + order.getDetails());
+        } else {
+            System.out.println("Ошибка: заказ не добавлен (повторный id или заказ уже выполнен). "
+                    + "Данные не изменены.");
+        }
+    }
+
+    private static void showOrders(WarehouseManager<Order> manager) {
+        List<Order> orders = manager.getAnalyticsStream().collect(Collectors.toList());
+        System.out.println("Остаток на складе: " + manager.getStock() + " ед. Всего заказов: "
+                + orders.size() + ".");
+        if (orders.isEmpty()) {
+            System.out.println("Список заказов пуст.");
+            return;
+        }
+        System.out.printf("%-4s %-11s %-8s %-10s %-12s %s%n",
+                "id", "тип", "клиент", "priority", "потребность", "состояние");
+        for (Order order : orders) {
+            System.out.printf("%-4d %-11s %-8d %-10d %-12d %s%n",
+                    order.getId(),
+                    order.getClass().getSimpleName(),
+                    order.getCustomerId(),
+                    order.getPriority(),
+                    order.getRequiredUnits(),
+                    order.isFulfilled() ? "выполнен" : "ожидает");
+        }
+    }
+
+    private static void restock(Scanner scanner, WarehouseManager<Order> manager) {
+        int amount = readInt(scanner, "Сколько единиц добавить (1..1000000): ");
+        if (manager.restock(amount)) {
+            System.out.println("Запас пополнен. Текущий остаток: " + manager.getStock() + " ед.");
+        } else {
+            System.out.println("Ошибка: недопустимое количество или превышен максимум склада. "
+                    + "Данные не изменены.");
+        }
+    }
+
+    private static void processOrders(WarehouseManager<Order> manager) {
+        List<Order> fulfilled = manager.process();
+        if (fulfilled.isEmpty()) {
+            System.out.println("В этом запуске не выполнен ни один заказ.");
+        } else {
+            System.out.println("Выполнено этим запуском: " + fulfilled.size());
+            for (Order order : fulfilled) {
+                System.out.println("  " + order.getDetails());
+            }
+        }
+        System.out.println("Текущий остаток: " + manager.getStock() + " ед.");
+    }
+
+    /** Пункт 5 — аналитический запрос варианта. */
+    private static void runAnalytics(WarehouseManager<Order> manager) {
+        Optional<Order> best = manager.analytics();
+        System.out.println("Вариант 8. Ожидающий заказ, помещающийся в текущий запас "
+                + "(max priority → max потребность → min id):");
+        if (best.isPresent()) {
+            System.out.println("  " + best.get().getDetails());
+        } else {
+            System.out.println("  Подходящего ожидающего заказа нет — пустой результат.");
+        }
+    }
+
+    /** Пункт 6 — сведения обо всех добавленных заказах. */
+    private static void showFullInfo(WarehouseManager<Order> manager) {
+        List<Order> orders = manager.getAnalyticsStream().collect(Collectors.toList());
+        long pending = orders.stream().filter(order -> !order.isFulfilled()).count();
+
+        System.out.println("===== Информация обо всех добавленных заказах =====");
+        System.out.println("Всего заказов: " + orders.size()
+                + " (ожидает: " + pending + ", выполнено: " + (orders.size() - pending) + ")");
+        System.out.println("Остаток на складе: " + manager.getStock() + " ед.");
+        if (orders.isEmpty()) {
+            System.out.println("Заказов пока нет.");
+            return;
+        }
+        int index = 1;
+        for (Order order : orders) {
+            System.out.println(index++ + ") " + order.getDetails());
+        }
+    }
+
+    /* ==================== ввод ==================== */
+
+    /**
+     * Прочитать целое число. Ошибочный ввод не завершает программу:
+     * выводится сообщение и запрос повторяется. При конце потока — сигнал InputEnded.
+     */
+    private static int readInt(Scanner scanner, String prompt) {
+        while (true) {
+            System.out.print(prompt);
+            if (!scanner.hasNextLine()) {
+                throw new InputEnded();
+            }
+            String line = scanner.nextLine().trim();
+            if (line.isEmpty()) {
+                System.out.println("Ошибка: пустой ввод. Повторите.");
+                continue;
+            }
+            try {
+                return Integer.parseInt(line);
+            } catch (NumberFormatException e) {
+                System.out.println("Ошибка: нужно целое число. Повторите.");
+            }
+        }
+    }
+}
+
+
+
+=======================================================================
+РАЗДЕЛ. ВАРИАНТ 10
+=======================================================================
+
+
+-----------------------------------------------------------------------
+ФАЙЛ: src/logic/WarehouseManager.java  (вариант 10)
+-----------------------------------------------------------------------
+package logic;
+
+import models.Order;
+import models.PackOrder;
+import models.UnitOrder;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+/**
+ * Менеджер склада одного вида товара.
+ *
+ * <p>Вариант 10.
+ * <ul>
+ *   <li>Обработка — «клиент целиком»: все ожидающие заказы клиента выполняются вместе
+ *       либо ни один. Клиенты упорядочены по суммарной потребности ожидающих заказов,
+ *       затем по customerId — по возрастанию; внутри группы — по id.</li>
+ *   <li>Аналитика — Map&lt;имя класса заказа, единицы товара по выполненным заказам&gt;,
+ *       оба типа присутствуют всегда (при отсутствии — 0).</li>
+ * </ul>
+ */
+public class WarehouseManager<T extends Order> {
+
+    /** Максимальная вместимость склада. */
+    public static final int MAX_STOCK = 1_000_000;
+
+    private final List<T> orders = new ArrayList<>();
+    private int stock;
+
+    public WarehouseManager(int stock) {
+        if (stock < 0 || stock > MAX_STOCK) {
+            throw new IllegalArgumentException("остаток должен быть от 0 до " + MAX_STOCK);
+        }
+        this.stock = stock;
+    }
+
+    /**
+     * Добавить новый невыполненный заказ.
+     *
+     * @return false без изменения данных, если order == null, повторяется id
+     *         или заказ уже выполнен; иначе true.
+     */
+    public boolean add(T order) {
+        if (order == null || order.isFulfilled()) {
+            return false;
+        }
+        boolean duplicateId = orders.stream().anyMatch(o -> o.getId() == order.getId());
+        if (duplicateId) {
+            return false;
+        }
+        orders.add(order);
+        return true;
+    }
+
+    /**
+     * Пополнить запас на amount единиц.
+     *
+     * @return false без изменения данных при недопустимом значении или превышении
+     *         максимального остатка; иначе true.
+     */
+    public boolean restock(int amount) {
+        if (amount < 1 || amount > MAX_STOCK) {
+            return false;
+        }
+        if ((long) stock + amount > MAX_STOCK) {
+            return false;
+        }
+        stock += amount;
+        return true;
+    }
+
+    /** @return текущий остаток товара в единицах. */
+    public int getStock() {
+        return stock;
+    }
+
+    /** @return поток всех заказов склада (для аналитики). */
+    public Stream<T> getAnalyticsStream() {
+        return orders.stream();
+    }
+
+    /**
+     * Обработать ожидающие заказы за один запуск (правило «клиент целиком»).
+     * Суммарная потребность клиента считается в long; заказ выполняется только целиком.
+     *
+     * @return заказы, выполненные именно этим вызовом, в порядке обработки.
+     */
+    public List<T> process() {
+        // Ожидающие заказы, сгруппированные по клиенту (порядок внутри группы — по id).
+        Map<Integer, List<T>> byClient = orders.stream()
+                .filter(order -> !order.isFulfilled())
+                .collect(Collectors.groupingBy(Order::getCustomerId, Collectors.toList()));
+
+        // Клиенты: суммарная потребность ожидающих заказов ↑, затем customerId ↑.
+        List<Integer> clients = byClient.keySet().stream()
+                .sorted(Comparator
+                        .comparingLong((Integer clientId) -> byClient.get(clientId).stream()
+                                .mapToLong(Order::getRequiredUnits)
+                                .sum())
+                        .thenComparingInt(Integer::intValue))
+                .collect(Collectors.toList());
+
+        List<T> fulfilledNow = new ArrayList<>();
+        for (Integer clientId : clients) {
+            List<T> group = byClient.get(clientId).stream()
+                    .sorted(Comparator.comparingInt(Order::getId))
+                    .collect(Collectors.toList());
+            long groupDemand = group.stream().mapToLong(Order::getRequiredUnits).sum();
+
+            // клиент обслуживается целиком либо не обслуживается вовсе
+            if (groupDemand > stock) {
+                continue;
+            }
+            for (T order : group) {
+                stock -= order.getRequiredUnits();
+                order.markFulfilled();
+                fulfilledNow.add(order);
+            }
+        }
+        return fulfilledNow;
+    }
+
+    /**
+     * Аналитический запрос варианта 10 (только Stream API, данные не изменяются).
+     *
+     * @return имя класса заказа → количество единиц товара по выполненным заказам
+     *         этого типа; оба типа присутствуют всегда, при отсутствии — 0.
+     */
+    public Map<String, Long> analytics() {
+        Map<String, Long> fulfilledByType = getAnalyticsStream()
+                .filter(Order::isFulfilled)
+                .collect(Collectors.groupingBy(
+                        order -> order.getClass().getSimpleName(),
+                        Collectors.summingLong(Order::getRequiredUnits)));
+
+        Map<String, Long> result = new LinkedHashMap<>();
+        result.put(UnitOrder.class.getSimpleName(),
+                fulfilledByType.getOrDefault(UnitOrder.class.getSimpleName(), 0L));
+        result.put(PackOrder.class.getSimpleName(),
+                fulfilledByType.getOrDefault(PackOrder.class.getSimpleName(), 0L));
+        return result;
+    }
+}
+
+
+-----------------------------------------------------------------------
+ФАЙЛ: src/main/Main.java               (вариант 10)
+-----------------------------------------------------------------------
+package main;
+
+import logic.WarehouseManager;
+import models.Order;
+import models.PackOrder;
+import models.UnitOrder;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Scanner;
+import java.util.stream.Collectors;
+
+/**
+ * Консольное приложение «система комплектации заказов на складе».
+ * Вариант 10.
+ */
+public class Main {
+
+    private static final int INITIAL_STOCK = 15;
+    private static final int VARIANT = 10;
+
+    /** Сигнал о конце входного потока (Ctrl+D) — не аварийное завершение программы. */
+    private static final class InputEnded extends RuntimeException {
+    }
+
+    public static void main(String[] args) {
+        List<Order> initial = initialOrders();
+        WarehouseManager<Order> manager = new WarehouseManager<>(INITIAL_STOCK);
+        for (Order order : initial) {
+            manager.add(order);
+        }
+
+        System.out.println("Система комплектации заказов на складе. Вариант " + VARIANT + ".");
+        System.out.println("Начальный остаток: " + INITIAL_STOCK + " ед., заказов: " + initial.size() + ".");
+
+        Scanner scanner = new Scanner(System.in);
+        try {
+            boolean running = true;
+            while (running) {
+                printMenu(manager);
+                int choice = readInt(scanner, "Ваш выбор: ");
+                switch (choice) {
+                    case 1:
+                        addOrder(scanner, manager);
+                        break;
+                    case 2:
+                        showOrders(manager);
+                        break;
+                    case 3:
+                        restock(scanner, manager);
+                        break;
+                    case 4:
+                        processOrders(manager);
+                        break;
+                    case 5:
+                        runAnalytics(manager);
+                        break;
+                    case 6:
+                        showFullInfo(manager);
+                        break;
+                    case 0:
+                        running = false;
+                        break;
+                    default:
+                        System.out.println("Ошибка: такого пункта меню нет.");
+                }
+            }
+            System.out.println("Работа завершена.");
+        } catch (InputEnded ended) {
+            System.out.println();
+            System.out.println("Ввод завершён (конец потока). Выход.");
+        }
+    }
+
+    /* ==================== начальные данные ==================== */
+
+    private static List<Order> initialOrders() {
+        List<Order> orders = new ArrayList<>();
+        orders.add(new UnitOrder(1, 1, 5, 9));
+        orders.add(new UnitOrder(4, 2, 2, 3));
+        orders.add(new UnitOrder(5, 3, 4, 5));
+        orders.add(new UnitOrder(8, 5, 1, 1));
+        orders.add(new UnitOrder(9, 2, 1, 2));
+        orders.add(new UnitOrder(11, 1, 1, 2));
+        orders.add(new PackOrder(2, 1, 4, 2, 3));
+        orders.add(new PackOrder(3, 2, 5, 2, 2));
+        orders.add(new PackOrder(6, 4, 3, 2, 5));
+        orders.add(new PackOrder(7, 3, 4, 1, 2));
+        orders.add(new PackOrder(10, 2, 1, 1, 3));
+        return orders;
+    }
+
+    /* ==================== меню и пункты ==================== */
+
+    private static void printMenu(WarehouseManager<Order> manager) {
+        System.out.println();
+        System.out.println("===== СКЛАД: комплектация заказов =====");
+        System.out.println("Остаток на складе: " + manager.getStock() + " ед.");
+        System.out.println(" 1. Добавить заказ (поштучный или упаковками)");
+        System.out.println(" 2. Показать все заказы и текущий остаток");
+        System.out.println(" 3. Пополнить запас товара");
+        System.out.println(" 4. Обработать заказы (выполненные этим запуском)");
+        System.out.println(" 5. Аналитический запрос (вариант " + VARIANT + ")");
+        System.out.println(" 6. Информация обо всех добавленных заказах");
+        System.out.println(" 0. Выход");
+    }
+
+    private static void addOrder(Scanner scanner, WarehouseManager<Order> manager) {
+        int type = readInt(scanner, "Тип заказа (1 — поштучный, 2 — упаковками): ");
+        if (type != 1 && type != 2) {
+            System.out.println("Ошибка: тип должен быть 1 или 2. Заказ не добавлен.");
+            return;
+        }
+        int id = readInt(scanner, "id заказа (положительное): ");
+        int customerId = readInt(scanner, "customerId клиента (положительное): ");
+        int priority = readInt(scanner, "priority (1..5): ");
+
+        Order order;
+        try {
+            if (type == 1) {
+                int quantity = readInt(scanner, "quantity (1..1000): ");
+                order = new UnitOrder(id, customerId, priority, quantity);
+            } else {
+                int packCount = readInt(scanner, "packCount (1..1000): ");
+                int packSize = readInt(scanner, "packSize (1..1000): ");
+                order = new PackOrder(id, customerId, priority, packCount, packSize);
+            }
+        } catch (IllegalArgumentException e) {
+            System.out.println("Ошибка: " + e.getMessage() + ". Заказ не добавлен.");
+            return;
+        }
+
+        if (manager.add(order)) {
+            System.out.println("Заказ добавлен: " + order.getDetails());
+        } else {
+            System.out.println("Ошибка: заказ не добавлен (повторный id или заказ уже выполнен). "
+                    + "Данные не изменены.");
+        }
+    }
+
+    private static void showOrders(WarehouseManager<Order> manager) {
+        List<Order> orders = manager.getAnalyticsStream().collect(Collectors.toList());
+        System.out.println("Остаток на складе: " + manager.getStock() + " ед. Всего заказов: "
+                + orders.size() + ".");
+        if (orders.isEmpty()) {
+            System.out.println("Список заказов пуст.");
+            return;
+        }
+        System.out.printf("%-4s %-11s %-8s %-10s %-12s %s%n",
+                "id", "тип", "клиент", "priority", "потребность", "состояние");
+        for (Order order : orders) {
+            System.out.printf("%-4d %-11s %-8d %-10d %-12d %s%n",
+                    order.getId(),
+                    order.getClass().getSimpleName(),
+                    order.getCustomerId(),
+                    order.getPriority(),
+                    order.getRequiredUnits(),
+                    order.isFulfilled() ? "выполнен" : "ожидает");
+        }
+    }
+
+    private static void restock(Scanner scanner, WarehouseManager<Order> manager) {
+        int amount = readInt(scanner, "Сколько единиц добавить (1..1000000): ");
+        if (manager.restock(amount)) {
+            System.out.println("Запас пополнен. Текущий остаток: " + manager.getStock() + " ед.");
+        } else {
+            System.out.println("Ошибка: недопустимое количество или превышен максимум склада. "
+                    + "Данные не изменены.");
+        }
+    }
+
+    private static void processOrders(WarehouseManager<Order> manager) {
+        List<Order> fulfilled = manager.process();
+        if (fulfilled.isEmpty()) {
+            System.out.println("В этом запуске не выполнен ни один заказ.");
+        } else {
+            System.out.println("Выполнено этим запуском: " + fulfilled.size());
+            for (Order order : fulfilled) {
+                System.out.println("  " + order.getDetails());
+            }
+        }
+        System.out.println("Текущий остаток: " + manager.getStock() + " ед.");
+    }
+
+    /** Пункт 5 — аналитический запрос варианта. */
+    private static void runAnalytics(WarehouseManager<Order> manager) {
+        Map<String, Long> unitsByType = manager.analytics();
+        System.out.println("Вариант 10. Единицы товара по выполненным заказам каждого типа:");
+        unitsByType.forEach((type, units) ->
+                System.out.println("  " + type + " → " + units + " ед."));
+    }
+
+    /** Пункт 6 — сведения обо всех добавленных заказах. */
+    private static void showFullInfo(WarehouseManager<Order> manager) {
+        List<Order> orders = manager.getAnalyticsStream().collect(Collectors.toList());
+        long pending = orders.stream().filter(order -> !order.isFulfilled()).count();
+
+        System.out.println("===== Информация обо всех добавленных заказах =====");
+        System.out.println("Всего заказов: " + orders.size()
+                + " (ожидает: " + pending + ", выполнено: " + (orders.size() - pending) + ")");
+        System.out.println("Остаток на складе: " + manager.getStock() + " ед.");
+        if (orders.isEmpty()) {
+            System.out.println("Заказов пока нет.");
+            return;
+        }
+        int index = 1;
+        for (Order order : orders) {
+            System.out.println(index++ + ") " + order.getDetails());
+        }
+    }
+
+    /* ==================== ввод ==================== */
+
+    /**
+     * Прочитать целое число. Ошибочный ввод не завершает программу:
+     * выводится сообщение и запрос повторяется. При конце потока — сигнал InputEnded.
+     */
+    private static int readInt(Scanner scanner, String prompt) {
+        while (true) {
+            System.out.print(prompt);
+            if (!scanner.hasNextLine()) {
+                throw new InputEnded();
+            }
+            String line = scanner.nextLine().trim();
+            if (line.isEmpty()) {
+                System.out.println("Ошибка: пустой ввод. Повторите.");
+                continue;
+            }
+            try {
+                return Integer.parseInt(line);
+            } catch (NumberFormatException e) {
+                System.out.println("Ошибка: нужно целое число. Повторите.");
+            }
+        }
+    }
+}
+
+
+=======================================================================
+РАЗДЕЛ 5. СБОРКА, ЗАПУСК И ПРОВЕРЕННЫЕ РЕЗУЛЬТАТЫ
+=======================================================================
+
+СБОРКА И ЗАПУСК (из папки проекта, например variant-2)
+  javac -encoding UTF-8 -d out $(find src -name "*.java")
+  java -cp out main.Main
+
+Для вариантов 2, 8 и 10 меняется только содержимое
+src/logic/WarehouseManager.java и src/main/Main.java;
+файлы из папок interfaces и models у всех трёх одинаковые.
+
+ЧТО ПРОВЕРЕНО (код скомпилирован и запущен на JDK 21, вывод совпал
+с расчётом вручную):
+
+  Начальные данные: stock = 15, 11 заказов (6 поштучных + 5 упаковками).
+
+  ВАРИАНТ 2 (меню: 4 → 5 → 6 → 0)
+    Обработка: выполнено 2 заказа, остаток 4
+      UnitOrder{id=1, c=1, p=5, 9 ед.}   (15 - 9 = 6, резерв ceil(15/4)=4 → можно)
+      PackOrder{id=7, c=3, p=4, 2 ед.}   (6 - 2 = 4, ровно резерв → можно)
+      дальше id2 (6 ед.) не влезает: 6 - 6 = 0 < 4 резерва
+    Аналитика (ожидающие): клиент 1 → 8; 2 → 12; 3 → 5; 4 → 10; 5 → 1
+
+  ВАРИАНТ 8 (меню: 4 → 5 → 0)
+    Обработка: та же — выполнено 2, остаток 4
+    Аналитика: PackOrder{id=3, c=2, p=5, 4 ед.} — высший приоритет
+      среди помещающихся в остаток 4.
+
+  ВАРИАНТ 10 (меню: 4 → 5 → 0)
+    Обработка: выполнено 3 заказа, остаток 7
+      клиент 5 (1 ед.)  → id8
+      клиент 3 (7 ед.)  → id5, id7
+      далее клиент 4 (10 ед.) не влезает в 7
+    Аналитика: UnitOrder → 6 ед.; PackOrder → 2 ед.
+
+  ПОВТОРНАЯ ОБРАБОТКА (меню: 4 → 3 (пополнить 100) → 4 → 5)
+    Вариант 2:  остаток 104 → выполнено 9 заказов → остаток 68,
+                аналитика пуста (ожидающих нет).
+    Вариант 10: остаток 107 → выполнено 8 заказов → остаток 68,
+                UnitOrder → 22 ед.; PackOrder → 25 ед.
+    Ранее выполненные заказы повторно не списываются.
+
+  ОБРАБОТКА ОШИБОК
+    - повторный id при добавлении  → «заказ не добавлен … Данные не изменены»
+    - priority = 9                 → IllegalArgumentException пойман, заказ не добавлен
+    - restock 2 000 000            → отказ (вне диапазона 1..1 000 000)
+    - restock 1 000 000 при stock=4 → отказ (превышение максимума склада)
+    - ввод «abc» вместо числа      → сообщение и повтор запроса, программа продолжает работу
+    - отклонённые операции не меняют данные (остаток и список заказов прежние)
