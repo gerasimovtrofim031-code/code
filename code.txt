@@ -4,7 +4,7 @@ $content = [Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\Users\fores\One
 
 
 $headers = @{
->> Authorization = "Bearer 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"
+>> Authorization = "Bearer ghp-rzlKSryoZ0Mdiqqz2gm6xonvejkB0M2Pj3bL"
 >> Accept = "application/vnd.github+json"
 >> }
 
